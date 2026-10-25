@@ -52,8 +52,6 @@ local CONFIG = {
 		{ key = "Rockwell", title = "Rockwell", packId = 4506165589, letterIds = {} },
 		{ key = "GothamBlack", title = "Gotham Black", packId = 15715862597, letterIds = {} },
 		{ key = "Horror", title = "Horror", packId = 3789128815, letterIds = {} },
-		-- letters are built from many parts and lie flat on the ground in the pack, so stand them up
-		{ key = "Alphabet", title = "Alphabet", packId = 13447092806, letterIds = {}, orient = Vector3.new(90, 0, 0), frontNegZ = false },
 	},
 
 	SaveFile = "DZHUP_NameMaker.json",
@@ -69,6 +67,9 @@ local CONFIG = {
 		"rbxassetid://6895079853",
 	},
 	ClickSoundVolume = 0.8,
+
+	-- press this key to open / close the window
+	ToggleKey = Enum.KeyCode.RightShift,
 
 	-- dual color: how fast the colors flow (cycles per second) and how many waves fit in one name
 	WaveSpeed = 0.35,
@@ -626,6 +627,7 @@ new("UIGradient", {
 -- Tabs and pages
 ---------------------------------------------------------------------
 local TAB_Y, CONTENT_Y = 70, 120
+local TAB_COUNT = 4
 
 local tabTrack = new("Frame", {
 	Position = UDim2.fromOffset(16, TAB_Y),
@@ -639,7 +641,7 @@ stroke(tabTrack, THEME.line, 0.5, 1)
 
 local tabIndicator = new("Frame", {
 	Position = UDim2.new(0, 4, 0, 4),
-	Size = UDim2.new(1 / 3, -8, 1, -8),
+	Size = UDim2.new(1 / TAB_COUNT, -8, 1, -8),
 	BackgroundColor3 = Color3.new(1, 1, 1),
 	BorderSizePixel = 0,
 }, tabTrack)
@@ -652,16 +654,17 @@ local content = new("Frame", {
 	BackgroundTransparency = 1,
 }, panel)
 local createPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, content)
+local studioPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
 local listPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
 local aboutPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
-local pages = { createPage, listPage, aboutPage }
+local pages = { createPage, studioPage, listPage, aboutPage }
 
-local TAB_TITLES = { "Create", "My Names", "Creator" }
+local TAB_TITLES = { "Create", "Studio", "My Names", "Creator" }
 local tabButtons = {}
 for i, title in ipairs(TAB_TITLES) do
 	tabButtons[i] = new("TextButton", {
-		Position = UDim2.new((i - 1) / 3, 0, 0, 0),
-		Size = UDim2.new(1 / 3, 0, 1, 0),
+		Position = UDim2.new((i - 1) / TAB_COUNT, 0, 0, 0),
+		Size = UDim2.new(1 / TAB_COUNT, 0, 1, 0),
 		BackgroundTransparency = 1,
 		AutoButtonColor = false,
 		Text = title,
@@ -963,6 +966,72 @@ local selectedStyle = "Plastic"
 local selectedFont = fontOf(CONFIG.DefaultFont)
 local swatches = {}
 
+-- Studio options (applied to the next name)
+local SIZES = {
+	{ key = "S", title = "Small" },
+	{ key = "M", title = "Medium" },
+	{ key = "L", title = "Large" },
+	{ key = "XL", title = "Huge" },
+}
+local SIZE_VALUES = { S = 0.6, M = 1, L = 1.6, XL = 2.4 }
+local SPACINGS = {
+	{ key = "T", title = "Tight" },
+	{ key = "N", title = "Normal" },
+	{ key = "W", title = "Wide" },
+}
+local SPACING_VALUES = { T = 0.25, N = 1, W = 2.6 }
+local SHAPES = {
+	{ key = "Straight", title = "Straight" },
+	{ key = "ArcUp", title = "Arc Up" },
+	{ key = "ArcDown", title = "Arc Down" },
+	{ key = "Wave", title = "Wave" },
+}
+local SHAPE_TITLES = { Straight = "Straight", ArcUp = "Arc Up", ArcDown = "Arc Down", Wave = "Wave" }
+local CASES = {
+	{ key = "Normal", title = "As typed" },
+	{ key = "Upper", title = "UPPER" },
+	{ key = "Lower", title = "lower" },
+	{ key = "Title", title = "Title Case" },
+}
+local EFFECTS = {
+	{ key = "glow", title = "Glow" },
+	{ key = "float", title = "Float" },
+	{ key = "rainbow", title = "Rainbow" },
+}
+local FX_TITLES = { glow = "Glow", float = "Float", rainbow = "Rainbow" }
+
+local studio = {
+	size = "M",
+	gap = "N",
+	shape = "Straight",
+	case = "Normal",
+	fx = { glow = false, float = false, rainbow = false },
+}
+
+local function applyCase(text)
+	if studio.case == "Upper" then
+		return string.upper(text)
+	elseif studio.case == "Lower" then
+		return string.lower(text)
+	elseif studio.case == "Title" then
+		return (string.gsub(string.lower(text), "(%a)([%w']*)", function(first, rest)
+			return string.upper(first) .. rest
+		end))
+	end
+	return text
+end
+
+local function currentFx()
+	local result, any = {}, false
+	for key, value in pairs(studio.fx) do
+		if value then
+			result[key] = true
+			any = true
+		end
+	end
+	return any and result or nil
+end
+
 local function selectedColor2()
 	return PALETTE[selectedColor2Index][2]
 end
@@ -973,7 +1042,7 @@ end
 
 local function updatePreview()
 	local color = selectedColor()
-	local text = nameBox.Text ~= "" and nameBox.Text or "YOUR NAME"
+	local text = nameBox.Text ~= "" and applyCase(nameBox.Text) or "YOUR NAME"
 	previewText.Text = text
 	previewText.TextColor3 = color
 	previewText.TextTransparency = 0
@@ -1223,6 +1292,137 @@ nameBox:GetPropertyChangedSignal("Text"):Connect(function()
 end)
 
 ---------------------------------------------------------------------
+-- Studio page: pro options for the next name
+---------------------------------------------------------------------
+local studioCard = new("Frame", {
+	Size = UDim2.fromOffset(588, 356),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+}, studioPage)
+corner(studioCard, 12)
+stroke(studioCard, THEME.line, 0.5, 1)
+
+local studioGroups = {}
+local refreshStudio
+
+local function chipGroup(y, items, onPick)
+	local row = new("Frame", {
+		Position = UDim2.fromOffset(16, y),
+		Size = UDim2.new(1, -32, 0, 30),
+		BackgroundTransparency = 1,
+	}, studioCard)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, row)
+
+	local group = { chips = {} }
+	group.isActive = function()
+		return false
+	end
+	function group.refresh()
+		for _, chip in ipairs(group.chips) do
+			local active = group.isActive(chip.key)
+			tween(chip.button, 0.14, { BackgroundColor3 = active and THEME.accent or THEME.surface2 })
+			chip.button.TextColor3 = active and THEME.dark or THEME.text
+			chip.stroke.Transparency = active and 1 or 0.4
+		end
+	end
+
+	for index, item in ipairs(items) do
+		local button = new("TextButton", {
+			Text = item.title,
+			Size = UDim2.fromOffset(126, 30),
+			TextSize = 11,
+			Font = Enum.Font.GothamBold,
+			TextColor3 = THEME.text,
+			BackgroundColor3 = THEME.surface2,
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+			LayoutOrder = index,
+		}, row)
+		corner(button, 8)
+		local chip = { key = item.key, button = button, stroke = stroke(button, THEME.line, 0.4, 1) }
+		table.insert(group.chips, chip)
+		button.MouseEnter:Connect(function()
+			if not group.isActive(chip.key) then
+				tween(button, 0.1, { BackgroundColor3 = THEME.line })
+			end
+		end)
+		button.MouseLeave:Connect(function()
+			if not group.isActive(chip.key) then
+				tween(button, 0.1, { BackgroundColor3 = THEME.surface2 })
+			end
+		end)
+		button.Activated:Connect(function()
+			onPick(chip.key)
+		end)
+	end
+	table.insert(studioGroups, group)
+	return group
+end
+
+sectionTitle(studioCard, "SIZE", 12)
+local sizeGroup = chipGroup(32, SIZES, function(key)
+	studio.size = key
+	refreshStudio()
+end)
+sizeGroup.isActive = function(key)
+	return studio.size == key
+end
+
+sectionTitle(studioCard, "LETTER SPACING", 76)
+local gapGroup = chipGroup(96, SPACINGS, function(key)
+	studio.gap = key
+	refreshStudio()
+end)
+gapGroup.isActive = function(key)
+	return studio.gap == key
+end
+
+sectionTitle(studioCard, "SHAPE", 140)
+local shapeGroup = chipGroup(160, SHAPES, function(key)
+	studio.shape = key
+	refreshStudio()
+end)
+shapeGroup.isActive = function(key)
+	return studio.shape == key
+end
+
+sectionTitle(studioCard, "TEXT CASE", 204)
+local caseGroup = chipGroup(224, CASES, function(key)
+	studio.case = key
+	refreshStudio()
+	updatePreview()
+end)
+caseGroup.isActive = function(key)
+	return studio.case == key
+end
+
+sectionTitle(studioCard, "EFFECTS (can be combined)", 268)
+local fxGroup = chipGroup(288, EFFECTS, function(key)
+	studio.fx[key] = not studio.fx[key]
+	refreshStudio()
+end)
+fxGroup.isActive = function(key)
+	return studio.fx[key] == true
+end
+
+textLabel(studioCard, "These options apply to the next name you create.", {
+	Position = UDim2.fromOffset(16, 330),
+	Size = UDim2.new(1, -32, 0, 14),
+	TextSize = 10,
+	TextColor3 = THEME.muted,
+})
+
+refreshStudio = function()
+	for _, group in ipairs(studioGroups) do
+		group.refresh()
+	end
+end
+
+---------------------------------------------------------------------
 -- 3D engine (letters loaded from asset IDs)
 ---------------------------------------------------------------------
 local templates = {}
@@ -1405,7 +1605,13 @@ local function getTemplate(font, character)
 		return nil, 'The model for "' .. character .. '" has no 3D parts'
 	end
 
-	local template = { model = model, center = boxCFrame.Position, width = size.X, height = size.Y }
+	local template = {
+		model = model,
+		center = boxCFrame.Position,
+		pivotPos = model:GetPivot().Position,
+		width = size.X,
+		height = size.Y,
+	}
 	templates[cacheKey] = template
 	return template
 end
@@ -1542,8 +1748,15 @@ local function buildName(entry)
 	if type(entry.color2) == "table" then
 		color2 = Color3.fromRGB(entry.color2[1], entry.color2[2], entry.color2[3])
 	end
+	local scale = type(entry.size) == "number" and math.clamp(entry.size, 0.2, 6) or 1
+	local gapMul = type(entry.gap) == "number" and math.clamp(entry.gap, 0, 6) or 1
+	local shape = entry.shape or "Straight"
+	local fx = type(entry.fx) == "table" and entry.fx or {}
+	local colorAnim = color2 ~= nil or fx.rainbow == true
+
 	local center = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
 	local rotation = CFrame.new(0, 0, 0, table.unpack(entry.rot))
+	local normal = rotation.LookVector
 	local right = Vector3.new(entry.right[1], entry.right[2], entry.right[3])
 	local frontNegZ = font.frontNegZ
 	if frontNegZ == nil then
@@ -1554,7 +1767,7 @@ local function buildName(entry)
 	end
 
 	local pieces = {}
-	local letterCount, widthSum = 0, 0
+	local letterCount, widthSum, maxHeight = 0, 0, 1
 	for _, codepoint in utf8.codes(entry.name) do
 		local character = utf8.char(codepoint)
 		if string.match(character, "^%s$") then
@@ -1566,15 +1779,33 @@ local function buildName(entry)
 			end
 			table.insert(pieces, { template = template })
 			letterCount += 1
-			widthSum += template.width
+			widthSum += template.width * scale
+			maxHeight = math.max(maxHeight, template.height * scale)
 		end
 	end
 
+	local gap = CONFIG.LetterGap * gapMul * scale
 	local spaceWidth = letterCount > 0 and (widthSum / letterCount) * CONFIG.SpaceWidthRatio or 1
-	local totalWidth = -CONFIG.LetterGap
+	local totalWidth = -gap
 	for _, piece in ipairs(pieces) do
-		piece.width = piece.template and piece.template.width or spaceWidth
-		totalWidth += piece.width + CONFIG.LetterGap
+		piece.width = piece.template and piece.template.width * scale or spaceWidth
+		totalWidth += piece.width + gap
+	end
+
+	-- shape: returns sideways offset, height offset and tilt (radians) for a letter at xc
+	local arcAngle = math.min(math.rad(110), totalWidth / (maxHeight * 3))
+	local radius = arcAngle > 0.01 and totalWidth / arcAngle or nil
+	local function shapeAt(xc)
+		if (shape == "ArcUp" or shape == "ArcDown") and radius then
+			local phi = xc / radius
+			local sign = shape == "ArcUp" and 1 or -1
+			return radius * math.sin(phi), sign * (radius * math.cos(phi) - radius), -sign * phi
+		elseif shape == "Wave" then
+			local amp = maxHeight * 0.28
+			local k = (math.pi * 2 * 1.5) / math.max(totalWidth, 0.01)
+			return xc, amp * math.sin(k * xc), math.atan(amp * k * math.cos(k * xc))
+		end
+		return xc, 0, 0
 	end
 
 	local group = Instance.new("Model")
@@ -1587,27 +1818,54 @@ local function buildName(entry)
 		local template = piece.template
 		if template then
 			local letter = template.model:Clone()
+			local appliedScale = 1
+			if scale ~= 1 then
+				if pcall(function()
+					letter:ScaleTo(scale)
+				end) then
+					appliedScale = scale
+				end
+			end
 			paintModel(letter, color, style)
 
-			local target = center + right * (cursor + piece.width / 2) + Vector3.yAxis * (template.height / 2)
-			local placement = CFrame.new(target) * rotation * CFrame.new(-template.center)
+			local xc = cursor + piece.width / 2
+			local dx, dy, roll = shapeAt(xc)
+			local rollCF = CFrame.fromAxisAngle(normal, roll)
+			local up = rollCF:VectorToWorldSpace(Vector3.yAxis)
+			local scaledCenter = template.pivotPos + (template.center - template.pivotPos) * appliedScale
+			local target = center + right * dx + Vector3.yAxis * dy + up * (template.height * appliedScale / 2)
+			local placement = CFrame.new(target) * rollCF * rotation * CFrame.new(-scaledCenter)
 			letter:PivotTo(placement * letter:GetPivot())
 
 			letter.Name = template.model.Name
 			letter.Parent = group
-			if color2 then
+
+			local light = nil
+			if fx.glow then
+				local anchorPart = letter:FindFirstChildWhichIsA("BasePart", true)
+				if anchorPart then
+					light = Instance.new("PointLight")
+					light.Color = color
+					light.Brightness = 2
+					light.Range = math.clamp(10 * scale, 6, 30)
+					light.Shadows = false
+					light.Parent = anchorPart
+				end
+			end
+
+			if colorAnim then
 				local parts = {}
 				for _, item in ipairs(letter:GetDescendants()) do
 					if item:IsA("BasePart") then
 						table.insert(parts, item)
 					end
 				end
-				local t = totalWidth > 0 and (cursor + piece.width / 2 + totalWidth / 2) / totalWidth or 0
-				table.insert(waveLetters, { parts = parts, t = t })
+				local t = totalWidth > 0 and (xc + totalWidth / 2) / totalWidth or 0
+				table.insert(waveLetters, { parts = parts, t = t, light = light })
 			end
 			firstPart = firstPart or letter:FindFirstChildWhichIsA("BasePart", true)
 		end
-		cursor += piece.width + CONFIG.LetterGap
+		cursor += piece.width + gap
 	end
 
 	if not firstPart then
@@ -1628,18 +1886,27 @@ local function buildName(entry)
 
 	group.PrimaryPart = firstPart
 	group.Parent = namesFolder
-	if color2 then
-		animated[group] = { c1 = color, c2 = color2, letters = waveLetters }
-	end
 	pcall(function()
 		local _, size = group:GetBoundingBox()
 		entry.h = size.Y
 	end)
+	if colorAnim or fx.float then
+		animated[group] = {
+			c1 = color,
+			c2 = color2,
+			rainbow = fx.rainbow == true,
+			letters = colorAnim and waveLetters or nil,
+			float = fx.float == true,
+			base = group:GetPivot(),
+			amp = 0.35 * math.max(scale, 0.6),
+			phase = math.random() * math.pi * 2,
+		}
+	end
 	return group
 end
 
 ---------------------------------------------------------------------
--- Dual color animation: the two colors flow along the name
+-- Animations: flowing dual color, rainbow and floating names
 ---------------------------------------------------------------------
 local lastWave = 0
 on(RunService.Heartbeat, function()
@@ -1652,12 +1919,25 @@ on(RunService.Heartbeat, function()
 		if not group.Parent then
 			animated[group] = nil
 		else
-			for _, letter in ipairs(info.letters) do
-				local wave = (math.sin((letter.t * CONFIG.WaveSpread - now * CONFIG.WaveSpeed) * math.pi * 2) + 1) / 2
-				local blended = info.c1:Lerp(info.c2, wave)
-				for _, part in ipairs(letter.parts) do
-					part.Color = blended
+			if info.letters then
+				for _, letter in ipairs(info.letters) do
+					local blended
+					if info.rainbow then
+						blended = Color3.fromHSV((letter.t * 0.8 - now * 0.12) % 1, 0.8, 1)
+					else
+						local wave = (math.sin((letter.t * CONFIG.WaveSpread - now * CONFIG.WaveSpeed) * math.pi * 2) + 1) / 2
+						blended = info.c1:Lerp(info.c2, wave)
+					end
+					for _, part in ipairs(letter.parts) do
+						part.Color = blended
+					end
+					if letter.light then
+						letter.light.Color = blended
+					end
 				end
+			end
+			if info.float then
+				group:PivotTo(info.base + Vector3.new(0, math.sin(now * 1.4 + info.phase) * info.amp, 0))
 			end
 		end
 	end
@@ -1758,7 +2038,7 @@ function renderList()
 		return (a.order or 0) > (b.order or 0)
 	end)
 
-	tabButtons[2].Text = string.format("My Names (%d)", #sorted)
+	tabButtons[3].Text = string.format("My Names (%d)", #sorted)
 	listCount.Text = string.format("%d / %d", #sorted, CONFIG.MaxNames)
 	emptyState.Visible = #sorted == 0
 	listFrame.Visible = #sorted > 0
@@ -1800,7 +2080,18 @@ function renderList()
 			TextSize = 17,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		})
-		textLabel(row, fontOf(entry.font).title .. "  |  " .. (STYLE_TITLES[entry.style] or "Plastic") .. " material", {
+		local details = fontOf(entry.font).title .. "  |  " .. (STYLE_TITLES[entry.style] or "Plastic")
+		if entry.shape and SHAPE_TITLES[entry.shape] then
+			details = details .. "  |  " .. SHAPE_TITLES[entry.shape]
+		end
+		if type(entry.fx) == "table" then
+			for _, item in ipairs(EFFECTS) do
+				if entry.fx[item.key] then
+					details = details .. "  |  " .. FX_TITLES[item.key]
+				end
+			end
+		end
+		textLabel(row, details, {
 			Position = UDim2.fromOffset(60, 35),
 			Size = UDim2.new(1, -230, 0, 16),
 			TextSize = 11,
@@ -1849,6 +2140,51 @@ function renderList()
 		end)
 	end
 end
+
+local clearButton = makeButton(listPage, {
+	Text = "Clear all",
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -62, 0, 0),
+	Size = UDim2.fromOffset(74, 22),
+	TextSize = 11,
+	TextColor3 = THEME.danger,
+}, { fill = THEME.surface, stroke = THEME.danger, strokeTransparency = 0.6, radius = 7 })
+local clearArmed = false
+clearButton.Activated:Connect(function()
+	if #names == 0 then
+		showToast("Nothing to clear", false)
+		return
+	end
+	if not clearArmed then
+		clearArmed = true
+		clearButton.Text = "Confirm?"
+		clearButton.TextColor3 = THEME.text
+		tween(clearButton, 0.12, { BackgroundColor3 = THEME.danger })
+		task.delay(2.5, function()
+			if clearArmed and clearButton.Parent then
+				clearArmed = false
+				clearButton.Text = "Clear all"
+				clearButton.TextColor3 = THEME.danger
+				tween(clearButton, 0.12, { BackgroundColor3 = THEME.surface })
+			end
+		end)
+		return
+	end
+	clearArmed = false
+	clearButton.Text = "Clear all"
+	clearButton.TextColor3 = THEME.danger
+	tween(clearButton, 0.12, { BackgroundColor3 = THEME.surface })
+	for _, item in ipairs(names) do
+		local old = namesFolder:FindFirstChild(modelNameOf(item))
+		if old then
+			old:Destroy()
+		end
+	end
+	table.clear(names)
+	persist()
+	renderList()
+	showToast("All names deleted", true)
+end)
 
 ---------------------------------------------------------------------
 -- Creator page
@@ -2109,13 +2445,13 @@ local function switchTab(index, instant)
 		page.Visible = i == index
 		tabButtons[i].TextColor3 = i == index and THEME.dark or THEME.muted
 	end
-	local target = UDim2.new((index - 1) / 3, 4, 0, 4)
+	local target = UDim2.new((index - 1) / TAB_COUNT, 4, 0, 4)
 	if instant then
 		tabIndicator.Position = target
 	else
 		tween(tabIndicator, 0.3, { Position = target }, Enum.EasingStyle.Quint)
 	end
-	if index == 2 then
+	if index == 3 then
 		renderList()
 	end
 end
@@ -2374,6 +2710,14 @@ end)
 closeButton.Activated:Connect(function()
 	setOpen(false)
 end)
+on(UserInputService.InputBegan, function(input, processed)
+	if processed then
+		return
+	end
+	if input.KeyCode == CONFIG.ToggleKey then
+		setOpen(not isOpen)
+	end
+end)
 
 ---------------------------------------------------------------------
 -- Create a name
@@ -2397,6 +2741,25 @@ local function cleanName(value)
 	return name
 end
 
+local function rememberSettings()
+	save.settings.last = {
+		color = selectedColorIndex,
+		color2 = selectedColor2Index,
+		dual = dualOn,
+		style = selectedStyle,
+		font = selectedFont.key,
+		size = studio.size,
+		gap = studio.gap,
+		shape = studio.shape,
+		case = studio.case,
+		fx = {
+			glow = studio.fx.glow,
+			float = studio.fx.float,
+			rainbow = studio.fx.rainbow,
+		},
+	}
+end
+
 local function submit()
 	if busy then
 		return
@@ -2411,6 +2774,7 @@ local function submit()
 		return
 	end
 
+	name = applyCase(name)
 	local color = selectedColor()
 	local order = 0
 	for _, item in ipairs(names) do
@@ -2423,6 +2787,10 @@ local function submit()
 		name = name,
 		style = selectedStyle,
 		font = selectedFont.key,
+		size = SIZE_VALUES[studio.size],
+		gap = SPACING_VALUES[studio.gap],
+		shape = studio.shape ~= "Straight" and studio.shape or nil,
+		fx = currentFx(),
 		color2 = dualOn and {
 			math.floor(selectedColor2().R * 255 + 0.5),
 			math.floor(selectedColor2().G * 255 + 0.5),
@@ -2453,6 +2821,7 @@ local function submit()
 		end
 
 		table.insert(names, entry)
+		rememberSettings()
 		local saved = persist()
 		renderList()
 		if saved then
@@ -2472,7 +2841,46 @@ end)
 ---------------------------------------------------------------------
 -- Boot
 ---------------------------------------------------------------------
-setStyle("Plastic")
+do
+	local last = save.settings.last
+	if type(last) == "table" then
+		if PALETTE[last.color] then
+			selectedColorIndex = last.color
+		end
+		if PALETTE[last.color2] then
+			selectedColor2Index = last.color2
+		end
+		dualOn = last.dual == true
+		if FONT_BY_KEY[last.font] then
+			selectedFont = FONT_BY_KEY[last.font]
+		end
+		if STYLE_TITLES[last.style] then
+			selectedStyle = last.style
+		end
+		if SIZE_VALUES[last.size] then
+			studio.size = last.size
+		end
+		if SPACING_VALUES[last.gap] then
+			studio.gap = last.gap
+		end
+		if SHAPE_TITLES[last.shape] then
+			studio.shape = last.shape
+		end
+		for _, item in ipairs(CASES) do
+			if item.key == last.case then
+				studio.case = last.case
+			end
+		end
+		if type(last.fx) == "table" then
+			for key in pairs(studio.fx) do
+				studio.fx[key] = last.fx[key] == true
+			end
+		end
+	end
+end
+setStyle(selectedStyle)
+setFont(selectedFont.key)
+refreshStudio()
 switchTab(1, true)
 updatePreview()
 renderList()
