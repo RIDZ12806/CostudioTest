@@ -52,6 +52,10 @@ local CONFIG = {
 	SaveFile = "DZHUP_NameMaker.json",
 	PromptOnLaunch = true, -- ask about Discord / WhatsApp when the system opens
 
+	-- sound played when any button is pressed
+	ClickSoundId = "rbxassetid://70968472837037",
+	ClickSoundVolume = 1,
+
 	-- dual color: how fast the colors flow (cycles per second) and how many waves fit in one name
 	WaveSpeed = 0.35,
 	WaveSpread = 1,
@@ -342,6 +346,29 @@ local gui = new("ScreenGui", {
 	DisplayOrder = 999,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, guiParent)
+
+---------------------------------------------------------------------
+-- Button click sound (every TextButton in the interface)
+---------------------------------------------------------------------
+local clickSound = new("Sound", {
+	Name = "ClickSound",
+	SoundId = CONFIG.ClickSoundId,
+	Volume = CONFIG.ClickSoundVolume,
+}, gui)
+
+local function playClick()
+	pcall(function()
+		clickSound.TimePosition = 0
+		clickSound:Play()
+	end)
+end
+
+local function hookClick(instance)
+	if instance:IsA("TextButton") and instance.Name ~= "ResizeHandle" then
+		instance.Activated:Connect(playClick)
+	end
+end
+gui.DescendantAdded:Connect(hookClick)
 
 local backdrop = new("Frame", {
 	Name = "Backdrop",
@@ -2168,6 +2195,66 @@ corner(veil, 16)
 local isOpen = false
 local openToken = 0
 
+-- RX icon: slides away when the window opens, pops back with a ripple when it closes
+local function hideOpenButton(token)
+	tween(openButtonScale, 0.28, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+	tween(openButton, 0.28, { Rotation = 120, BackgroundTransparency = 1, TextTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	tween(openStroke, 0.25, { Transparency = 1 })
+	task.delay(0.3, function()
+		if token == openToken and isOpen then
+			openButton.Visible = false
+		end
+	end)
+end
+
+local function showOpenButton(token)
+	openButton.Visible = true
+	openButtonScale.Scale = 0
+	openButton.Rotation = -180
+	openButton.BackgroundTransparency = 1
+	openButton.TextTransparency = 1
+	openStroke.Transparency = 1
+
+	task.delay(0.22, function()
+		if token ~= openToken or isOpen then
+			return
+		end
+		tween(openButtonScale, 0.6, { Scale = 1 }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		tween(openButton, 0.6, { Rotation = 0 }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+		tween(openButton, 0.4, { BackgroundTransparency = 0.5, TextTransparency = 0.1 }, Enum.EasingStyle.Sine)
+		tween(openStroke, 0.5, { Transparency = 0.45 }, Enum.EasingStyle.Sine)
+
+		-- ripple ring that expands from the icon
+		local ring = new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0, 34, 0.5, 0),
+			Size = UDim2.fromOffset(44, 44),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+		}, gui)
+		corner(ring, 100)
+		local ringLine = stroke(ring, THEME.accent, 0.1, 2.5)
+		tween(ring, 0.8, { Size = UDim2.fromOffset(120, 120) }, Enum.EasingStyle.Quint)
+		tween(ringLine, 0.8, { Transparency = 1, Thickness = 0.5 }, Enum.EasingStyle.Quad)
+		task.delay(0.85, function()
+			ring:Destroy()
+		end)
+
+		-- small glow pulse on the icon after it lands
+		task.delay(0.45, function()
+			if token ~= openToken or isOpen then
+				return
+			end
+			tween(openButtonScale, 0.14, { Scale = 1.12 }, Enum.EasingStyle.Sine)
+			task.delay(0.14, function()
+				if token == openToken and not isOpen then
+					tween(openButtonScale, 0.25, { Scale = 1 }, Enum.EasingStyle.Back)
+				end
+			end)
+		end)
+	end)
+end
+
 local function setOpen(open)
 	if isOpen == open then
 		return
@@ -2176,12 +2263,9 @@ local function setOpen(open)
 	openToken += 1
 	local token = openToken
 
-	tween(openButtonScale, 0.1, { Scale = 0.92 })
-	task.delay(0.1, function()
-		tween(openButtonScale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
-	end)
-
 	if open then
+		hideOpenButton(token)
+
 		if not placed then
 			placeInitially()
 		else
@@ -2202,7 +2286,6 @@ local function setOpen(open)
 		panelStroke.Color = THEME.accent
 		panelStroke.Transparency = 0
 
-		tween(openStroke, 0.25, { Transparency = 0 })
 		tween(backdrop, 0.4, { BackgroundTransparency = 0.62 })
 		tween(veil, 0.45, { BackgroundTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0.05)
 		tween(panel, 0.6, { Position = UDim2.new(0.5, 0, 0.5, 0) }, Enum.EasingStyle.Quint)
@@ -2220,7 +2303,7 @@ local function setOpen(open)
 		end)
 	else
 		veil.Visible = true
-		tween(openStroke, 0.25, { Transparency = 0.45 })
+		showOpenButton(token)
 		tween(backdrop, 0.22, { BackgroundTransparency = 1 })
 		tween(veil, 0.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 		tween(panel, 0.24, { Position = UDim2.new(0.5, 0, 0.5, 14) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
