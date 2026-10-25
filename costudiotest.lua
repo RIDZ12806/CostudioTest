@@ -157,9 +157,25 @@ if hasFS and isfile(CONFIG.SaveFile) then
 	end)
 end
 
-local placeKey = tostring(game.PlaceId)
+local function computeKey()
+	local id = game.PlaceId
+	if type(id) == "number" and id ~= 0 then
+		return tostring(id)
+	end
+	local ok, projectName = pcall(function()
+		return game.Name
+	end)
+	return "0|" .. tostring(ok and projectName or "project")
+end
+local placeKey = computeKey()
 if type(save.places[placeKey]) ~= "table" then
-	save.places[placeKey] = {}
+	-- older versions saved every unsaved project under "0": move that list to this project once
+	if type(save.places["0"]) == "table" and string.sub(placeKey, 1, 2) == "0|" then
+		save.places[placeKey] = save.places["0"]
+		save.places["0"] = nil
+	else
+		save.places[placeKey] = {}
+	end
 end
 local names = save.places[placeKey]
 
@@ -340,6 +356,29 @@ if not namesFolder then
 	namesFolder = Instance.new("Folder")
 	namesFolder.Name = "DZHUP_Names"
 	namesFolder.Parent = Workspace
+end
+
+-- Studio Lite replaces the whole world when you leave Play mode or open another project.
+-- The folder we held becomes a dead object (new names went into the trash). So the folder is
+-- looked up again every time something is built.
+function H.getFolder()
+	Workspace = game:GetService("Workspace")
+	local folder = namesFolder
+	local alive = false
+	pcall(function()
+		alive = folder ~= nil and folder.Parent == Workspace and folder:IsDescendantOf(game)
+	end)
+	if alive then
+		return folder
+	end
+	folder = Workspace:FindFirstChild("DZHUP_Names")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "DZHUP_Names"
+		folder.Parent = Workspace
+	end
+	namesFolder = folder
+	return folder
 end
 
 local guiParent
@@ -1718,6 +1757,7 @@ local function viewBasis()
 end
 
 local function getPlacement(skipEntry)
+	Workspace = game:GetService("Workspace")
 	local position, look, forward = viewBasis()
 	local anchor = findSpawnPosition()
 	local baseY = anchor.Y + CONFIG.HeightOffset
@@ -2334,7 +2374,7 @@ local function buildName(entry)
 	end
 
 	group.PrimaryPart = firstPart
-	group.Parent = namesFolder
+	group.Parent = H.getFolder()
 	H.hold(group)
 	pcall(function()
 		local _, size = group:GetBoundingBox()
@@ -2465,7 +2505,7 @@ local emptyState = textLabel(listPage, "No saved names yet" .. utf8.char(10) .. 
 
 local function moveEntry(entry)
 	task.spawn(function()
-		local old = namesFolder:FindFirstChild(modelNameOf(entry))
+		local old = H.getFolder():FindFirstChild(modelNameOf(entry))
 		if old then
 			old:Destroy()
 		end
@@ -2482,7 +2522,7 @@ local function moveEntry(entry)
 end
 
 local function deleteEntry(entry)
-	local old = namesFolder:FindFirstChild(modelNameOf(entry))
+	local old = H.getFolder():FindFirstChild(modelNameOf(entry))
 	if old then
 		old:Destroy()
 	end
@@ -2646,7 +2686,7 @@ clearButton.Activated:Connect(function()
 	clearButton.TextColor3 = THEME.danger
 	tween(clearButton, 0.12, { BackgroundColor3 = THEME.surface })
 	for _, item in ipairs(names) do
-		local old = namesFolder:FindFirstChild(modelNameOf(item))
+		local old = H.getFolder():FindFirstChild(modelNameOf(item))
 		if old then
 			old:Destroy()
 		end
@@ -3384,10 +3424,18 @@ task.spawn(function()
 	H.ensureEffects(false)
 end)
 
--- Restore saved names for this place
-task.spawn(function()
+-- Restore saved names for this place (also used again after Play mode / project switch)
+H.restoring = false
+function H.restore(waitFirst)
+	if H.restoring then
+		return
+	end
+	H.restoring = true
 	local warned = false
-	task.wait(1)
+	if waitFirst then
+		task.wait(1)
+	end
+	H.getFolder()
 
 	local anchor = findSpawnPosition()
 	local moved = 0
@@ -3399,8 +3447,8 @@ task.spawn(function()
 	end
 	local viewPosition = viewBasis()
 
-	for _, entry in ipairs(names) do
-		local existing = namesFolder:FindFirstChild(modelNameOf(entry))
+	for _, entry in ipairs(table.clone(names)) do
+		local existing = H.getFolder():FindFirstChild(modelNameOf(entry))
 		if existing then
 			-- already saved inside the project: keep it exactly as it is
 			H.hold(existing)
@@ -3424,6 +3472,54 @@ task.spawn(function()
 	end
 	if moved > 0 then
 		persist()
+	end
+	H.restoring = false
+end
+task.spawn(H.restore, true)
+
+-- Watchdog: notices when Studio Lite switched to another project or came back from Play mode,
+-- then reconnects to the new world so creating names keeps working.
+task.spawn(function()
+	local token = {}
+	genv.DZHUP_WatchToken = token
+	while genv.DZHUP_WatchToken == token do
+		task.wait(1.5)
+		if not H.restoring then
+			local changedProject = false
+			local key = computeKey()
+			if key ~= placeKey then
+				changedProject = true
+				-- keep the old project's list, then load the list of the new project
+				save.places[placeKey] = table.clone(names)
+				local nextList = save.places[key]
+				table.clear(names)
+				if type(nextList) == "table" then
+					for _, item in ipairs(nextList) do
+						table.insert(names, item)
+					end
+				end
+				save.places[key] = names
+				placeKey = key
+				persist()
+				table.clear(templates)
+				table.clear(animated)
+			end
+
+			local stale = true
+			pcall(function()
+				stale = not (namesFolder ~= nil and namesFolder:IsDescendantOf(game))
+			end)
+			if changedProject or stale then
+				table.clear(animated)
+				H.getFolder()
+				pcall(renderList)
+				task.spawn(H.restore, false)
+				task.spawn(function()
+					task.wait(1)
+					H.ensureEffects(true)
+				end)
+			end
+		end
 	end
 end)
 
