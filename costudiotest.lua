@@ -1,1165 +1,2048 @@
 --[[
-    ╔══════════════════════════════════════════════════════════╗
-    ║           C O S T U D I O   A I   v2.0                  ║
-    ║     Premium AI Assistant • Luxury Edition                ║
-    ╚══════════════════════════════════════════════════════════╝
+DZ HUP  |  3D Name Maker  (Executor Edition)
+Made by RiyadoDzz
+
+Single LocalScript-style file. No Studio setup needed:
+letters are loaded from Roblox asset IDs automatically.
+Names are saved to a file and restored on the next launch.
 ]]
 
--- Services
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
+
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
 
-local Player = Players.LocalPlayer
-local PlayerGui = Player:WaitForChild("PlayerGui")
+local player = Players.LocalPlayer
 
--- Cleanup previous instances
-local existing = PlayerGui:FindFirstChild("CostudioAI")
-if existing then existing:Destroy() end
+---------------------------------------------------------------------
+-- CONFIG  (fill the marked fields)
+---------------------------------------------------------------------
+local CONFIG = {
+	Creator = "RiyadoDzz",
+	Community = "DZ HUP",
+	Discord = "https://discord.gg/Dj3CCnZAxJ",
+	WhatsApp = "https://whatsapp.com/channel/0029VbDuGkhGJP8DJbzVEG0K",
 
--- ═══════════════════════════════════════════════
---  THEME CONFIGURATION
--- ═══════════════════════════════════════════════
-local Theme = {
-    -- Base Colors
-    BG_Darkest    = Color3.fromRGB(8, 8, 14),
-    BG_Dark       = Color3.fromRGB(14, 14, 22),
-    BG_Card       = Color3.fromRGB(20, 20, 32),
-    BG_Input      = Color3.fromRGB(16, 16, 28),
-    BG_Hover      = Color3.fromRGB(28, 28, 44),
+	-- >>> Your picture (use ONE of these two) <<<
+	AvatarRobloxUserId = 0, -- your Roblox user id (shows your avatar headshot)
+	AvatarImageUrl = "", -- or a direct image link (GitHub raw), e.g. https://raw.githubusercontent.com/.../me.png
 
-    -- Accent (Gold)
-    Accent        = Color3.fromRGB(212, 175, 85),
-    Accent_Light  = Color3.fromRGB(235, 205, 120),
-    Accent_Dim    = Color3.fromRGB(140, 115, 55),
-    Accent_Glow   = Color3.fromRGB(212, 175, 85),
+	-- >>> Letter models (use ONE of these two) <<<
+	PackAssetId = 0, -- one asset that contains models named A..Z, 0..9
+	LetterAssetIds = {
+		-- or one id per letter, for example:
+		-- A = 1234567890,
+		-- B = 1234567891,
+	},
 
-    -- Text
-    Text_Primary  = Color3.fromRGB(240, 240, 245),
-    Text_Secondary= Color3.fromRGB(160, 160, 180),
-    Text_Muted    = Color3.fromRGB(90, 90, 110),
-    Text_Accent   = Color3.fromRGB(212, 175, 85),
+	SaveFile = "DZHUP_NameMaker.json",
+	PromptOnLaunch = true, -- ask about Discord / WhatsApp when the system opens
 
-    -- Semantic
-    Success       = Color3.fromRGB(80, 200, 120),
-    Danger        = Color3.fromRGB(220, 70, 70),
-    Danger_Hover  = Color3.fromRGB(250, 90, 90),
-
-    -- Borders
-    Border        = Color3.fromRGB(40, 40, 58),
-    Border_Light  = Color3.fromRGB(55, 55, 75),
-
-    -- Glass
-    Glass_BG      = Color3.fromRGB(18, 18, 30),
-    Glass_Border  = Color3.fromRGB(50, 50, 70),
-
-    -- AI Bubble
-    AI_BG         = Color3.fromRGB(22, 22, 38),
-    User_BG       = Color3.fromRGB(35, 30, 18),
-
-    -- Fonts
-    Font_Title    = Enum.Font.GothamBold,
-    Font_Heading  = Enum.Font.GothamMedium,
-    Font_Body     = Enum.Font.Gotham,
-    Font_Input    = Enum.Font.Gotham,
-    Font_Icon     = Enum.Font.GothamBold,
+	MaxNameLength = 24,
+	MaxNames = 40,
+	LetterGap = 0.16,
+	SpaceWidthRatio = 0.6,
+	PlaceDistance = 7,
+	HeightOffset = 2.8,
+	-- true = the readable face of each letter is -Z. Set false if names look mirrored.
+	FrontFaceIsNegativeZ = true,
 }
 
--- ═══════════════════════════════════════════════
---  UTILITY FUNCTIONS
--- ═══════════════════════════════════════════════
-local function MakeCorner(parent, radius)
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim2.new(0, radius or 8)
-    corner.Parent = parent
-    return corner
+---------------------------------------------------------------------
+-- Cleanup of an older run
+---------------------------------------------------------------------
+local genv = (type(getgenv) == "function" and getgenv()) or _G
+if genv.DZHUP_NameMakerCleanup then
+	pcall(genv.DZHUP_NameMakerCleanup)
+end
+local conns = {}
+local function on(signal, fn)
+	local c = signal:Connect(fn)
+	table.insert(conns, c)
+	return c
 end
 
-local function MakeStroke(parent, color, thickness)
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = color or Theme.Border
-    stroke.Thickness = thickness or 1
-    stroke.Parent = parent
-    return stroke
+---------------------------------------------------------------------
+-- Executor helpers
+---------------------------------------------------------------------
+local hasFS = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+
+local function copyText(text)
+	local fn = setclipboard or toclipboard or set_clipboard
+	if type(fn) == "function" then
+		local ok = pcall(fn, text)
+		return ok
+	end
+	return false
 end
 
-local function MakePadding(parent, top, bottom, left, right)
-    local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim2.new(0, top or 0)
-    pad.PaddingBottom = UDim2.new(0, bottom or 0)
-    pad.PaddingLeft = UDim2.new(0, left or 0)
-    pad.PaddingRight = UDim2.new(0, right or 0)
-    pad.Parent = parent
-    return pad
+local function loadObject(id)
+	local ok, result = pcall(function()
+		return game:GetObjects("rbxassetid://" .. tostring(id))
+	end)
+	if ok and type(result) == "table" and result[1] then
+		return result[1]
+	end
+	return nil, tostring(result)
 end
 
-local function MakeGradient(parent, color1, color2, rotation)
-    local grad = Instance.new("UIGradient")
-    grad.Color = ColorSequence.new(color1, color2)
-    grad.Rotation = rotation or 90
-    grad.Parent = parent
-    return grad
+---------------------------------------------------------------------
+-- Saved data
+---------------------------------------------------------------------
+local save = { settings = {}, places = {} }
+if hasFS and isfile(CONFIG.SaveFile) then
+	pcall(function()
+		local decoded = HttpService:JSONDecode(readfile(CONFIG.SaveFile))
+		if type(decoded) == "table" then
+			save.settings = type(decoded.settings) == "table" and decoded.settings or {}
+			save.places = type(decoded.places) == "table" and decoded.places or {}
+		end
+	end)
 end
 
-local function SmoothTween(obj, props, duration, style)
-    return TweenService:Create(obj, TweenInfo.new(duration or 0.3, style or Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props)
+local placeKey = tostring(game.PlaceId)
+if type(save.places[placeKey]) ~= "table" then
+	save.places[placeKey] = {}
+end
+local names = save.places[placeKey]
+
+local function persist()
+	if not hasFS then
+		return false
+	end
+	local ok = pcall(function()
+		writefile(CONFIG.SaveFile, HttpService:JSONEncode(save))
+	end)
+	return ok
 end
 
-local function RippleEffect(button, x, y)
-    local ripple = Instance.new("Frame")
-    ripple.Name = "Ripple"
-    ripple.BackgroundColor3 = Theme.Accent
-    ripple.BackgroundTransparency = 0.6
-    ripple.Size = UDim2.new(0, 0, 0, 0)
-    ripple.Position = UDim2.new(0, x, 0, y)
-    ripple.AnchorPoint = Vector2.new(0.5, 0.5)
-    ripple.ZIndex = 100
-    MakeCorner(ripple, 300)
-    ripple.Parent = button
-
-    local grow = TweenService:Create(ripple, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 400, 0, 400),
-        BackgroundTransparency = 1
-    })
-    grow:Play()
-    grow.Completed:Connect(function()
-        ripple:Destroy()
-    end)
-end
-
-local function TypewriterEffect(label, text, speed)
-    speed = speed or 0.02
-    label.Text = ""
-    for i = 1, #text do
-        label.Text = string.sub(text, 1, i)
-        task.wait(speed)
-    end
-end
-
--- ═══════════════════════════════════════════════
---  SESSION DATA
--- ═══════════════════════════════════════════════
-local Sessions = {}
-local ActiveSession = nil
-
-local function CreateSession()
-    local id = tostring(HttpService:GenerateGUID(false))
-    local session = {
-        Id = id,
-        Title = "New Chat",
-        Messages = {},
-        CreatedAt = os.time()
-    }
-    table.insert(Sessions, session)
-    ActiveSession = session
-    return session
-end
-
-local function DeleteSession(id)
-    for i, s in ipairs(Sessions) do
-        if s.Id == id then
-            table.remove(Sessions, i)
-            if ActiveSession and ActiveSession.Id == id then
-                ActiveSession = #Sessions > 0 and Sessions[#Sessions] or CreateSession()
-            end
-            break
-        end
-    end
-end
-
--- ═══════════════════════════════════════════════
---  AI RESPONSE (Simulated)
--- ═══════════════════════════════════════════════
-local AIResponses = {
-    "That's a great question! Let me think about that for you. Based on my analysis, I'd recommend exploring multiple approaches to find the best solution for your specific use case.",
-    "I understand what you're looking for. Here's my take — the key is to balance performance with readability. Sometimes the simplest solution is the most elegant one.",
-    "Interesting point! In my experience, the best results come from iterating on your ideas. Start with a solid foundation and refine from there.",
-    "Let me break this down for you step by step. First, we need to understand the core problem, then we can architect a solution that scales well.",
-    "Great question! The answer depends on your context, but here are some general principles I'd suggest following for optimal results.",
-    "I've analyzed your request carefully. The most effective approach would be to combine different techniques while keeping your codebase clean and maintainable.",
-    "That's something I see a lot of people wonder about. The short answer is: it depends. But here's a framework for thinking about it more clearly.",
-    "Absolutely! Here's what I'd suggest — focus on the fundamentals first, then layer in complexity as needed. Don't over-engineer early on.",
+---------------------------------------------------------------------
+-- Theme
+---------------------------------------------------------------------
+local THEME = {
+	bg = Color3.fromRGB(14, 16, 23),
+	bgTop = Color3.fromRGB(24, 27, 38),
+	header = Color3.fromRGB(17, 19, 27),
+	surface = Color3.fromRGB(23, 26, 36),
+	surface2 = Color3.fromRGB(33, 37, 50),
+	field = Color3.fromRGB(13, 15, 21),
+	line = Color3.fromRGB(50, 56, 75),
+	text = Color3.fromRGB(238, 241, 248),
+	muted = Color3.fromRGB(140, 149, 172),
+	dark = Color3.fromRGB(22, 19, 12),
+	accent = Color3.fromRGB(240, 185, 80),
+	accentSoft = Color3.fromRGB(255, 218, 150),
+	danger = Color3.fromRGB(240, 98, 110),
+	success = Color3.fromRGB(96, 214, 150),
+	discord = Color3.fromRGB(88, 101, 242),
+	whatsapp = Color3.fromRGB(37, 211, 102),
 }
 
-local function GetAIResponse(prompt)
-    -- Simulate thinking delay
-    task.wait(0.8 + math.random() * 1.2)
-    return AIResponses[math.random(1, #AIResponses)]
+local PALETTE = {
+	{ "White", Color3.fromRGB(245, 245, 245) },
+	{ "Gold", Color3.fromRGB(255, 211, 105) },
+	{ "Orange", Color3.fromRGB(255, 150, 60) },
+	{ "Red", Color3.fromRGB(255, 70, 75) },
+	{ "Pink", Color3.fromRGB(255, 105, 190) },
+	{ "Purple", Color3.fromRGB(170, 115, 255) },
+	{ "Blue", Color3.fromRGB(65, 150, 255) },
+	{ "Cyan", Color3.fromRGB(80, 230, 240) },
+	{ "Green", Color3.fromRGB(70, 225, 145) },
+	{ "Lime", Color3.fromRGB(190, 240, 70) },
+	{ "Silver", Color3.fromRGB(170, 176, 190) },
+	{ "Black", Color3.fromRGB(34, 34, 40) },
+}
+
+local STYLES = {
+	{ key = "Plastic", title = "Plastic" },
+	{ key = "Neon", title = "Neon" },
+	{ key = "Metal", title = "Metal" },
+	{ key = "Glass", title = "Glass" },
+	{ key = "Modern", title = "Modern" },
+}
+local STYLE_TITLES = {}
+for _, item in ipairs(STYLES) do
+	STYLE_TITLES[item.key] = item.title
 end
 
--- ═══════════════════════════════════════════════
---  BUILD GUI
--- ═══════════════════════════════════════════════
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "CostudioAI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.IgnoreGuiInset = true
-ScreenGui.Parent = PlayerGui
+local STYLE_DEFS = {
+	Plastic = { material = Enum.Material.SmoothPlastic, reflectance = 0.03, transparency = 0 },
+	Neon = { material = Enum.Material.Neon, reflectance = 0, transparency = 0 },
+	Metal = { material = Enum.Material.Metal, reflectance = 0.12, transparency = 0 },
+	Glass = { material = Enum.Material.Glass, reflectance = 0.08, transparency = 0.12 },
+	Modern = { material = Enum.Material.SmoothPlastic, reflectance = 0.08, transparency = 0 },
+}
 
--- Main Container
-local MainContainer = Instance.new("Frame")
-MainContainer.Name = "MainContainer"
-MainContainer.Size = UDim2.new(0, 820, 0, 560)
-MainContainer.Position = UDim2.new(0.5, 0, 0.5, 0)
-MainContainer.AnchorPoint = Vector2.new(0.5, 0.5)
-MainContainer.BackgroundColor3 = Theme.BG_Darkest
-MainContainer.BorderSizePixel = 0
-MainContainer.ClipsDescendants = true
-MakeCorner(MainContainer, 16)
-MakeStroke(MainContainer, Theme.Border, 1)
-MakePadding(MainContainer, 0, 0, 0, 0)
-MainContainer.Parent = ScreenGui
+---------------------------------------------------------------------
+-- UI helpers
+---------------------------------------------------------------------
+local function new(className, props, parent)
+	local instance = Instance.new(className)
+	for key, value in pairs(props) do
+		instance[key] = value
+	end
+	instance.Parent = parent
+	return instance
+end
 
--- Shadow Frame
-local Shadow = Instance.new("ImageLabel")
-Shadow.Name = "Shadow"
-Shadow.Size = UDim2.new(1, 50, 1, 50)
-Shadow.Position = UDim2.new(0, -25, 0, -25)
-Shadow.BackgroundTransparency = 1
-Shadow.Image = "rbxassetid://6015897843"
-Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
-Shadow.ImageTransparency = 0.4
-Shadow.ScaleType = Enum.ScaleType.Slice
-Shadow.SliceCenter = Rect.new(49, 49, 450, 450)
-Shadow.ZIndex = -1
-Shadow.Parent = MainContainer
+local function corner(parent, radius)
+	return new("UICorner", { CornerRadius = UDim.new(0, radius) }, parent)
+end
 
--- ═══════════════════════════════════════════════
---  SIDEBAR
--- ═══════════════════════════════════════════════
-local Sidebar = Instance.new("Frame")
-Sidebar.Name = "Sidebar"
-Sidebar.Size = UDim2.new(0, 240, 1, 0)
-Sidebar.BackgroundColor3 = Theme.BG_Dark
-Sidebar.BorderSizePixel = 0
-MakeCorner(Sidebar, 0)
-MakeStroke(Sidebar, Theme.Border, 1)
-Sidebar.Parent = MainContainer
+local function stroke(parent, color, transparency, thickness)
+	return new("UIStroke", {
+		Color = color,
+		Transparency = transparency,
+		Thickness = thickness or 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, parent)
+end
 
--- Sidebar Header
-local SidebarHeader = Instance.new("Frame")
-SidebarHeader.Name = "Header"
-SidebarHeader.Size = UDim2.new(1, 0, 0, 72)
-SidebarHeader.BackgroundTransparency = 1
-SidebarHeader.Parent = Sidebar
+local function tween(instance, duration, goal, style, direction, delay)
+	local t = TweenService:Create(
+		instance,
+		TweenInfo.new(
+			duration,
+			style or Enum.EasingStyle.Quad,
+			direction or Enum.EasingDirection.Out,
+			0,
+			false,
+			delay or 0
+		),
+		goal
+	)
+	t:Play()
+	return t
+end
 
-local LogoIcon = Instance.new("TextLabel")
-LogoIcon.Name = "LogoIcon"
-LogoIcon.Size = UDim2.new(0, 32, 0, 32)
-LogoIcon.Position = UDim2.new(0, 20, 0, 14)
-LogoIcon.BackgroundTransparency = 1
-LogoIcon.Text = "◆"
-LogoIcon.TextColor3 = Theme.Accent
-LogoIcon.Font = Theme.Font_Icon
-LogoIcon.TextSize = 22
-LogoIcon.Parent = SidebarHeader
+local function loop(instance, duration, goal, style, reverses)
+	local t = TweenService:Create(
+		instance,
+		TweenInfo.new(duration, style or Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, reverses ~= false),
+		goal
+	)
+	t:Play()
+	return t
+end
 
-local LogoText = Instance.new("TextLabel")
-LogoText.Name = "LogoText"
-LogoText.Size = UDim2.new(0, 120, 0, 20)
-LogoText.Position = UDim2.new(0, 58, 0, 18)
-LogoText.BackgroundTransparency = 1
-LogoText.Text = "COSTUDIO AI"
-LogoText.TextColor3 = Theme.Text_Primary
-LogoText.Font = Theme.Font_Title
-LogoText.TextSize = 16
-LogoText.TextXAlignment = Enum.TextXAlignment.Left
-LogoText.Parent = SidebarHeader
+local function textLabel(parent, text, props)
+	props.BackgroundTransparency = 1
+	props.Text = text
+	props.Font = props.Font or Enum.Font.GothamMedium
+	props.TextColor3 = props.TextColor3 or THEME.text
+	props.TextSize = props.TextSize or 13
+	props.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
+	return new("TextLabel", props, parent)
+end
 
-local LogoSubtext = Instance.new("TextLabel")
-LogoSubtext.Size = UDim2.new(0, 120, 0, 14)
-LogoSubtext.Position = UDim2.new(0, 58, 0, 40)
-LogoSubtext.BackgroundTransparency = 1
-LogoSubtext.Text = "Premium Edition"
-LogoSubtext.TextColor3 = Theme.Text_Muted
-LogoSubtext.Font = Theme.Font_Body
-LogoSubtext.TextSize = 10
-LogoSubtext.TextXAlignment = Enum.TextXAlignment.Left
-LogoSubtext.Parent = SidebarHeader
+local function makeButton(parent, props, options)
+	options = options or {}
+	local fill = options.fill or THEME.surface2
+	local hoverFill = options.hover or fill:Lerp(Color3.new(1, 1, 1), 0.08)
+	local pressFill = fill:Lerp(Color3.new(0, 0, 0), 0.25)
 
--- Gold accent line
-local AccentLine = Instance.new("Frame")
-AccentLine.Name = "AccentLine"
-AccentLine.Size = UDim2.new(1, -40, 0, 1)
-AccentLine.Position = UDim2.new(0, 20, 1, 0)
-AccentLine.BackgroundColor3 = Theme.Accent
-AccentLine.BackgroundTransparency = 0.4
-AccentLine.BorderSizePixel = 0
-AccentLine.Parent = SidebarHeader
+	props.BackgroundColor3 = fill
+	props.AutoButtonColor = false
+	props.BorderSizePixel = 0
+	props.Font = props.Font or Enum.Font.GothamBold
+	props.TextColor3 = props.TextColor3 or THEME.text
+	props.TextSize = props.TextSize or 13
 
--- New Chat Button
-local NewChatBtn = Instance.new("TextButton")
-NewChatBtn.Name = "NewChatBtn"
-NewChatBtn.Size = UDim2.new(1, -32, 0, 42)
-NewChatBtn.Position = UDim2.new(0, 16, 0, 80)
-NewChatBtn.BackgroundColor3 = Theme.Accent
-NewChatBtn.BorderSizePixel = 0
-NewChatBtn.Text = "  ＋  New Chat"
-NewChatBtn.TextColor3 = Theme.BG_Darkest
-NewChatBtn.Font = Theme.Font_Heading
-NewChatBtn.TextSize = 13
-NewChatBtn.TextXAlignment = Enum.TextXAlignment.Center
-MakeCorner(NewChatBtn, 10)
-NewChatBtn.Parent = Sidebar
+	local button = new("TextButton", props, parent)
+	corner(button, options.radius or 9)
+	local buttonStroke = stroke(button, options.stroke or THEME.line, options.strokeTransparency or 0.3, 1)
 
-local NewChatGradient = MakeGradient(NewChatBtn, Theme.Accent, Theme.Accent_Light, 90)
+	local hovering = false
+	button.MouseEnter:Connect(function()
+		hovering = true
+		tween(button, 0.12, { BackgroundColor3 = hoverFill })
+	end)
+	button.MouseLeave:Connect(function()
+		hovering = false
+		tween(button, 0.12, { BackgroundColor3 = fill })
+	end)
+	button.MouseButton1Down:Connect(function()
+		tween(button, 0.06, { BackgroundColor3 = pressFill })
+	end)
+	button.MouseButton1Up:Connect(function()
+		tween(button, 0.1, { BackgroundColor3 = hovering and hoverFill or fill })
+	end)
+	return button, buttonStroke
+end
 
-NewChatBtn.MouseButton1Click:Connect(function()
-    CreateSession()
-    RefreshSessionList()
-    RefreshChatArea()
-end)
+local function trim(text)
+	return (string.gsub(string.gsub(text, "^%s+", ""), "%s+$", ""))
+end
 
-NewChatBtn.MouseEnter:Connect(function()
-    SmoothTween(NewChatBtn, {BackgroundTransparency = 0, Size = UDim2.new(1, -28, 0, 44), Position = UDim2.new(0, 14, 0, 79)}, 0.2)
-end)
+---------------------------------------------------------------------
+-- Roots
+---------------------------------------------------------------------
+local oldFolder = Workspace:FindFirstChild("DZHUP_Names")
+if oldFolder then
+	oldFolder:Destroy()
+end
+local namesFolder = Instance.new("Folder")
+namesFolder.Name = "DZHUP_Names"
+namesFolder.Parent = Workspace
 
-NewChatBtn.MouseLeave:Connect(function()
-    SmoothTween(NewChatBtn, {Size = UDim2.new(1, -32, 0, 42), Position = UDim2.new(0, 16, 0, 80)}, 0.2)
-end)
-
--- Session List
-local SessionScrollFrame = Instance.new("ScrollingFrame")
-SessionScrollFrame.Name = "SessionList"
-SessionScrollFrame.Size = UDim2.new(1, -16, 1, -200)
-SessionScrollFrame.Position = UDim2.new(0, 8, 0, 132)
-SessionScrollFrame.BackgroundTransparency = 1
-SessionScrollFrame.BorderSizePixel = 0
-SessionScrollFrame.ScrollBarThickness = 3
-SessionScrollFrame.ScrollBarImageColor3 = Theme.Accent_Dim
-SessionScrollFrame.ScrollBarImageTransparency = 0.5
-SessionScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-SessionScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-SessionScrollFrame.Parent = Sidebar
-
-local SessionLayout = Instance.new("UIListLayout")
-SessionLayout.SortOrder = Enum.SortOrder.LayoutOrder
-SessionLayout.Padding = UDim2.new(0, 4)
-SessionLayout.Parent = SessionScrollFrame
-
--- Sidebar Footer
-local SidebarFooter = Instance.new("Frame")
-SidebarFooter.Name = "Footer"
-SidebarFooter.Size = UDim2.new(1, 0, 0, 48)
-SidebarFooter.Position = UDim2.new(0, 0, 1, -48)
-SidebarFooter.BackgroundColor3 = Theme.BG_Dark
-SidebarFooter.BorderSizePixel = 0
-SidebarFooter.Parent = Sidebar
-
-local FooterLine = Instance.new("Frame")
-FooterLine.Size = UDim2.new(1, -40, 0, 1)
-FooterLine.Position = UDim2.new(0, 20, 0, 0)
-FooterLine.BackgroundColor3 = Theme.Border
-FooterLine.BorderSizePixel = 0
-FooterLine.Parent = SidebarFooter
-
-local UserAvatar = Instance.new("ImageLabel")
-UserAvatar.Size = UDim2.new(0, 28, 0, 28)
-UserAvatar.Position = UDim2.new(0, 16, 0, 10)
-UserAvatar.BackgroundColor3 = Theme.BG_Card
-UserAvatar.BorderSizePixel = 0
-MakeCorner(UserAvatar, 14)
-MakeStroke(UserAvatar, Theme.Border, 1)
-UserAvatar.Parent = SidebarFooter
-
--- Try to load player avatar
+local guiParent
+do
+	local ok, hui = pcall(function()
+		return type(gethui) == "function" and gethui() or nil
+	end)
+	guiParent = (ok and hui) or player:WaitForChild("PlayerGui")
+end
 pcall(function()
-    local thumbType = Enum.ThumbnailType.HeadShot
-    local thumbSize = Enum.ThumbnailSize.Size100x100
-    UserAvatar.Image = Players:GetUserThumbnailAsync(Player.UserId, thumbType, thumbSize)
+	for _, child in ipairs(guiParent:GetChildren()) do
+		if child.Name == "DZHUP_NameMaker" then
+			child:Destroy()
+		end
+	end
 end)
 
-local UserName = Instance.new("TextLabel")
-UserName.Size = UDim2.new(0, 100, 0, 16)
-UserName.Position = UDim2.new(0, 52, 0, 11)
-UserName.BackgroundTransparency = 1
-UserName.Text = Player.DisplayName
-UserName.TextColor3 = Theme.Text_Primary
-UserName.Font = Theme.Font_Heading
-UserName.TextSize = 12
-UserName.TextXAlignment = Enum.TextXAlignment.Left
-UserName.TextTruncate = Enum.TextTruncate.AtEnd
-UserName.Parent = SidebarFooter
+local PANEL_W, PANEL_H = 620, 460
+local MIN_SCALE = 0.4
 
-local UserTag = Instance.new("TextLabel")
-UserTag.Size = UDim2.new(0, 100, 0, 12)
-UserTag.Position = UDim2.new(0, 52, 0, 28)
-UserTag.BackgroundTransparency = 1
-UserTag.Text = "Premium User"
-UserTag.TextColor3 = Theme.Accent_Dim
-UserTag.Font = Theme.Font_Body
-UserTag.TextSize = 9
-UserTag.TextXAlignment = Enum.TextXAlignment.Left
-UserTag.Parent = SidebarFooter
+local gui = new("ScreenGui", {
+	Name = "DZHUP_NameMaker",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = true,
+	DisplayOrder = 999,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, guiParent)
 
--- ═══════════════════════════════════════════════
---  CHAT AREA
--- ═══════════════════════════════════════════════
-local ChatArea = Instance.new("Frame")
-ChatArea.Name = "ChatArea"
-ChatArea.Size = UDim2.new(1, -240, 1, 0)
-ChatArea.Position = UDim2.new(0, 240, 0, 0)
-ChatArea.BackgroundTransparency = 1
-ChatArea.BorderSizePixel = 0
-ChatArea.Parent = MainContainer
+local backdrop = new("Frame", {
+	Name = "Backdrop",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.new(0, 0, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Visible = false,
+}, gui)
 
--- Chat Header
-local ChatHeader = Instance.new("Frame")
-ChatHeader.Name = "ChatHeader"
-ChatHeader.Size = UDim2.new(1, 0, 0, 58)
-ChatHeader.BackgroundColor3 = Theme.BG_Dark
-ChatHeader.BorderSizePixel = 0
-ChatHeader.Parent = ChatArea
+local openButton, openStroke = makeButton(gui, {
+	Text = "3D  NAMES",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 12, 0.5, 0),
+	Size = UDim2.fromOffset(106, 38),
+	TextSize = 12,
+}, { fill = THEME.header, stroke = THEME.accent, strokeTransparency = 0.45, radius = 19 })
+openButton.TextColor3 = THEME.accent
+local openButtonScale = new("UIScale", { Scale = 1 }, openButton)
 
-local ChatHeaderAccent = Instance.new("Frame")
-ChatHeaderAccent.Size = UDim2.new(1, 0, 0, 1)
-ChatHeaderAccent.Position = UDim2.new(0, 0, 1, -1)
-ChatHeaderAccent.BackgroundColor3 = Theme.Border
-ChatHeaderAccent.BorderSizePixel = 0
-ChatHeaderAccent.Parent = ChatHeader
+local holder = new("Frame", {
+	Name = "Holder",
+	Position = UDim2.fromOffset(0, 0),
+	Size = UDim2.fromOffset(PANEL_W, PANEL_H),
+	BackgroundTransparency = 1,
+	Visible = false,
+}, gui)
+local scaler = new("UIScale", { Scale = 1 }, holder)
 
-local ChatTitle = Instance.new("TextLabel")
-ChatTitle.Name = "Title"
-ChatTitle.Size = UDim2.new(0, 200, 0, 20)
-ChatTitle.Position = UDim2.new(0, 24, 0, 14)
-ChatTitle.BackgroundTransparency = 1
-ChatTitle.Text = "Costudio AI"
-ChatTitle.TextColor3 = Theme.Text_Primary
-ChatTitle.Font = Theme.Font_Title
-ChatTitle.TextSize = 16
-ChatTitle.TextXAlignment = Enum.TextXAlignment.Left
-ChatTitle.Parent = ChatHeader
+-- Plain Frame (no CanvasGroup) so text stays sharp at any size
+local panel = new("Frame", {
+	Name = "Panel",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = THEME.bg,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+}, holder)
+corner(panel, 16)
+local panelStroke = stroke(panel, THEME.line, 0.2, 1.2)
+local popScale = new("UIScale", { Scale = 0.9 }, panel)
 
-local ChatSubtitle = Instance.new("TextLabel")
-ChatSubtitle.Size = UDim2.new(0, 200, 0, 14)
-ChatSubtitle.Position = UDim2.new(0, 24, 0, 34)
-ChatSubtitle.BackgroundTransparency = 1
-ChatSubtitle.Text = "Always online • Ready to assist"
-ChatSubtitle.TextColor3 = Theme.Text_Muted
-ChatSubtitle.Font = Theme.Font_Body
-ChatSubtitle.TextSize = 10
-ChatSubtitle.TextXAlignment = Enum.TextXAlignment.Left
-ChatSubtitle.Parent = ChatHeader
+local fillFrame = new("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+}, panel)
+corner(fillFrame, 16)
+new("UIGradient", { Color = ColorSequence.new(THEME.bgTop, THEME.bg), Rotation = 90 }, fillFrame)
 
--- Online indicator dot
-local OnlineDot = Instance.new("Frame")
-OnlineDot.Size = UDim2.new(0, 7, 0, 7)
-OnlineDot.Position = UDim2.new(0, 228, 0, 37)
-OnlineDot.BackgroundColor3 = Theme.Success
-OnlineDot.BorderSizePixel = 0
-MakeCorner(OnlineDot, 4)
-OnlineDot.Parent = ChatHeader
+---------------------------------------------------------------------
+-- Position and size
+---------------------------------------------------------------------
+local placed = false
 
--- Minimize Button
-local MinimizeBtn = Instance.new("TextButton")
-MinimizeBtn.Name = "MinimizeBtn"
-MinimizeBtn.Size = UDim2.new(0, 32, 0, 32)
-MinimizeBtn.Position = UDim2.new(1, -44, 0, 13)
-MinimizeBtn.BackgroundColor3 = Theme.BG_Card
-MinimizeBtn.BorderSizePixel = 0
-MinimizeBtn.Text = "—"
-MinimizeBtn.TextColor3 = Theme.Text_Secondary
-MinimizeBtn.Font = Theme.Font_Heading
-MinimizeBtn.TextSize = 14
-MakeCorner(MinimizeBtn, 8)
-MakeStroke(MinimizeBtn, Theme.Border, 1)
-MinimizeBtn.Parent = ChatHeader
-
--- Close Button
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Name = "CloseBtn"
-CloseBtn.Size = UDim2.new(0, 32, 0, 32)
-CloseBtn.Position = UDim2.new(1, -84, 0, 13)
-CloseBtn.BackgroundColor3 = Theme.BG_Card
-CloseBtn.BorderSizePixel = 0
-CloseBtn.Text = "✕"
-CloseBtn.TextColor3 = Theme.Text_Secondary
-CloseBtn.Font = Theme.Font_Heading
-CloseBtn.TextSize = 13
-MakeCorner(CloseBtn, 8)
-MakeStroke(CloseBtn, Theme.Border, 1)
-CloseBtn.Parent = ChatHeader
-
--- Messages ScrollFrame
-local MessagesFrame = Instance.new("ScrollingFrame")
-MessagesFrame.Name = "Messages"
-MessagesFrame.Size = UDim2.new(1, -48, 1, -152)
-MessagesFrame.Position = UDim2.new(0, 24, 0, 66)
-MessagesFrame.BackgroundTransparency = 1
-MessagesFrame.BorderSizePixel = 0
-MessagesFrame.ScrollBarThickness = 3
-MessagesFrame.ScrollBarImageColor3 = Theme.Accent_Dim
-MessagesFrame.ScrollBarImageTransparency = 0.6
-MessagesFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-MessagesFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-MessagesFrame.Parent = ChatArea
-
-local MessagesLayout = Instance.new("UIListLayout")
-MessagesLayout.SortOrder = Enum.SortOrder.LayoutOrder
-MessagesLayout.Padding = UDim2.new(0, 10)
-MessagesLayout.Parent = MessagesFrame
-
--- ═══════════════════════════════════════════════
---  WELCOME SCREEN
--- ═══════════════════════════════════════════════
-local WelcomeFrame = Instance.new("Frame")
-WelcomeFrame.Name = "Welcome"
-WelcomeFrame.Size = UDim2.new(1, -48, 1, -152)
-WelcomeFrame.Position = UDim2.new(0, 24, 0, 66)
-WelcomeFrame.BackgroundTransparency = 1
-WelcomeFrame.Visible = true
-WelcomeFrame.Parent = ChatArea
-
-local WelcomeInner = Instance.new("Frame")
-WelcomeInner.Size = UDim2.new(0, 400, 0, 280)
-WelcomeInner.Position = UDim2.new(0.5, 0, 0.5, 0)
-WelcomeInner.AnchorPoint = Vector2.new(0.5, 0.5)
-WelcomeInner.BackgroundTransparency = 1
-WelcomeInner.Parent = WelcomeFrame
-
-local WelcomeIcon = Instance.new("TextLabel")
-WelcomeIcon.Size = UDim2.new(0, 60, 0, 60)
-WelcomeIcon.Position = UDim2.new(0.5, 0, 0, 0)
-WelcomeIcon.AnchorPoint = Vector2.new(0.5, 0)
-WelcomeIcon.BackgroundTransparency = 1
-WelcomeIcon.Text = "◆"
-WelcomeIcon.TextColor3 = Theme.Accent
-WelcomeIcon.Font = Theme.Font_Icon
-WelcomeIcon.TextSize = 48
-WelcomeIcon.Parent = WelcomeInner
-
-local WelcomeTitle = Instance.new("TextLabel")
-WelcomeTitle.Size = UDim2.new(0, 400, 0, 30)
-WelcomeTitle.Position = UDim2.new(0, 0, 0, 72)
-WelcomeTitle.BackgroundTransparency = 1
-WelcomeTitle.Text = "Welcome to Costudio AI"
-WelcomeTitle.TextColor3 = Theme.Text_Primary
-WelcomeTitle.Font = Theme.Font_Title
-WelcomeTitle.TextSize = 22
-WelcomeTitle.Parent = WelcomeInner
-
-local WelcomeDesc = Instance.new("TextLabel")
-WelcomeDesc.Size = UDim2.new(0, 400, 0, 40)
-WelcomeDesc.Position = UDim2.new(0, 0, 0, 106)
-WelcomeDesc.BackgroundTransparency = 1
-WelcomeDesc.Text = "Your premium AI assistant. Ask me anything —\nfrom scripting help to creative ideas."
-WelcomeDesc.TextColor3 = Theme.Text_Secondary
-WelcomeDesc.Font = Theme.Font_Body
-WelcomeDesc.TextSize = 13
-WelcomeDesc.Parent = WelcomeInner
-
--- Suggestion chips
-local SuggestionsFrame = Instance.new("Frame")
-SuggestionsFrame.Size = UDim2.new(0, 400, 0, 90)
-SuggestionsFrame.Position = UDim2.new(0, 0, 0, 165)
-SuggestionsFrame.BackgroundTransparency = 1
-SuggestionsFrame.Parent = WelcomeInner
-
-local SuggestionsLayout = Instance.new("UIListLayout")
-SuggestionsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-SuggestionsLayout.Padding = UDim2.new(0, 8)
-SuggestionsLayout.FillDirection = Enum.FillDirection.Horizontal
-SuggestionsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-SuggestionsLayout.Parent = SuggestionsFrame
-
-local Suggestions = {"Help me script", "Give me ideas", "Explain a concept", "Debug my code"}
-
-for i, text in ipairs(Suggestions) do
-    local chip = Instance.new("TextButton")
-    chip.Name = "Chip" .. i
-    chip.Size = UDim2.new(0, 0, 0, 34)
-    chip.AutomaticSize = Enum.AutomaticSize.X
-    chip.BackgroundColor3 = Theme.BG_Card
-    chip.BorderSizePixel = 0
-    chip.Text = "  " .. text .. "  "
-    chip.TextColor3 = Theme.Text_Secondary
-    chip.Font = Theme.Font_Body
-    chip.TextSize = 12
-    MakeCorner(chip, 17)
-    MakeStroke(chip, Theme.Border, 1)
-    chip.Parent = SuggestionsFrame
-
-    chip.MouseEnter:Connect(function()
-        SmoothTween(chip, {BackgroundColor3 = Theme.BG_Hover, TextColor3 = Theme.Accent}, 0.15)
-    end)
-    chip.MouseLeave:Connect(function()
-        SmoothTween(chip, {BackgroundColor3 = Theme.BG_Card, TextColor3 = Theme.Text_Secondary}, 0.15)
-    end)
-
-    chip.MouseButton1Click:Connect(function()
-        PromptInput.Text = text
-        PromptInput:CaptureFocus()
-    end)
+local function maxScaleFor(x, y)
+	local v = gui.AbsoluteSize
+	return math.max(MIN_SCALE, math.min((v.X - x) / PANEL_W, (v.Y - y) / PANEL_H, 1.8))
 end
 
--- ═══════════════════════════════════════════════
---  INPUT AREA
--- ═══════════════════════════════════════════════
-local InputArea = Instance.new("Frame")
-InputArea.Name = "InputArea"
-InputArea.Size = UDim2.new(1, -48, 0, 72)
-InputArea.Position = UDim2.new(0, 24, 1, -80)
-InputArea.BackgroundColor3 = Theme.BG_Input
-InputArea.BorderSizePixel = 0
-MakeCorner(InputArea, 14)
-MakeStroke(InputArea, Theme.Border, 1)
-InputArea.Parent = ChatArea
-
-local PromptInput = Instance.new("TextBox")
-PromptInput.Name = "PromptInput"
-PromptInput.Size = UDim2.new(1, -80, 1, -20)
-PromptInput.Position = UDim2.new(0, 20, 0, 10)
-PromptInput.BackgroundTransparency = 1
-PromptInput.Text = ""
-PromptInput.PlaceholderText = "Ask Costudio AI anything..."
-PromptInput.PlaceholderColor3 = Theme.Text_Muted
-PromptInput.TextColor3 = Theme.Text_Primary
-PromptInput.Font = Theme.Font_Input
-PromptInput.TextSize = 14
-PromptInput.TextXAlignment = Enum.TextXAlignment.Left
-PromptInput.TextYAlignment = Enum.TextYAlignment.Center
-PromptInput.ClearTextOnFocus = false
-PromptInput.MultiLine = true
-PromptInput.TextWrapped = true
-PromptInput.Parent = InputArea
-
--- Send Button
-local SendBtn = Instance.new("TextButton")
-SendBtn.Name = "SendBtn"
-SendBtn.Size = UDim2.new(0, 40, 0, 40)
-SendBtn.Position = UDim2.new(1, -52, 0, 16)
-SendBtn.BackgroundColor3 = Theme.Accent
-SendBtn.BorderSizePixel = 0
-SendBtn.Text = "↑"
-SendBtn.TextColor3 = Theme.BG_Darkest
-SendBtn.Font = Theme.Font_Title
-SendBtn.TextSize = 18
-MakeCorner(SendBtn, 12)
-SendBtn.Parent = InputArea
-
-SendBtn.MouseEnter:Connect(function()
-    SmoothTween(SendBtn, {BackgroundColor3 = Theme.Accent_Light, Size = UDim2.new(0, 44, 0, 44), Position = UDim2.new(1, -54, 0, 14)}, 0.15)
-end)
-SendBtn.MouseLeave:Connect(function()
-    SmoothTween(SendBtn, {BackgroundColor3 = Theme.Accent, Size = UDim2.new(0, 40, 0, 40), Position = UDim2.new(1, -52, 0, 16)}, 0.15)
-end)
-
--- ═══════════════════════════════════════════════
---  DRAG FUNCTIONALITY
--- ═══════════════════════════════════════════════
-local dragging = false
-local dragStart, startPos
-
-ChatHeader.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = MainContainer.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        MainContainer.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-
--- ═══════════════════════════════════════════════
---  MINIMIZE / CLOSE
--- ═══════════════════════════════════════════════
-local isMinimized = false
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Name = "ToggleBtn"
-ToggleBtn.Size = UDim2.new(0, 52, 0, 52)
-ToggleBtn.Position = UDim2.new(0.5, 0, 1, -70)
-ToggleBtn.AnchorPoint = Vector2.new(0.5, 0)
-ToggleBtn.BackgroundColor3 = Theme.Accent
-ToggleBtn.BorderSizePixel = 0
-ToggleBtn.Text = "◆"
-ToggleBtn.TextColor3 = Theme.BG_Darkest
-ToggleBtn.Font = Theme.Font_Icon
-ToggleBtn.TextSize = 20
-MakeCorner(ToggleBtn, 26)
-ToggleBtn.Visible = false
-ToggleBtn.Parent = ScreenGui
-
-local ToggleShadow = Instance.new("ImageLabel")
-ToggleShadow.Size = UDim2.new(1, 24, 1, 24)
-ToggleShadow.Position = UDim2.new(0, -12, 0, -12)
-ToggleShadow.BackgroundTransparency = 1
-ToggleShadow.Image = "rbxassetid://6015897843"
-ToggleShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
-ToggleShadow.ImageTransparency = 0.5
-ToggleShadow.ScaleType = Enum.ScaleType.Slice
-ToggleShadow.SliceCenter = Rect.new(49, 49, 450, 450)
-ToggleShadow.ZIndex = -1
-ToggleShadow.Parent = ToggleBtn
-
-MinimizeBtn.MouseButton1Click:Connect(function()
-    isMinimized = true
-    SmoothTween(MainContainer, {Size = UDim2.new(0, 820, 0, 0), BackgroundTransparency = 1}, 0.35, Enum.EasingStyle.Back):Play()
-    task.delay(0.35, function()
-        MainContainer.Visible = false
-        ToggleBtn.Visible = true
-        SmoothTween(ToggleBtn, {Size = UDim2.new(0, 52, 0, 52)}, 0.3):Play()
-    end)
-end)
-
-ToggleBtn.MouseButton1Click:Connect(function()
-    isMinimized = false
-    SmoothTween(ToggleBtn, {Size = UDim2.new(0, 0, 0, 0)}, 0.2):Play()
-    task.delay(0.2, function()
-        ToggleBtn.Visible = false
-        MainContainer.Visible = true
-        MainContainer.Size = UDim2.new(0, 820, 0, 0)
-        SmoothTween(MainContainer, {Size = UDim2.new(0, 820, 0, 560), BackgroundTransparency = 0}, 0.4, Enum.EasingStyle.Back):Play()
-    end)
-end)
-
-CloseBtn.MouseButton1Click:Connect(function()
-    SmoothTween(MainContainer, {Size = UDim2.new(0, 820, 0, 0), BackgroundTransparency = 1}, 0.3):Play()
-    SmoothTween(Shadow, {ImageTransparency = 1}, 0.3):Play()
-    task.delay(0.4, function()
-        ScreenGui:Destroy()
-    end)
-end)
-
--- ═══════════════════════════════════════════════
---  MESSAGE BUBBLE CREATION
--- ═══════════════════════════════════════════════
-local function CreateUserBubble(text)
-    local bubble = Instance.new("Frame")
-    bubble.Name = "UserMessage"
-    bubble.Size = UDim2.new(1, 0, 0, 0)
-    bubble.AutomaticSize = Enum.AutomaticSize.Y
-    bubble.BackgroundTransparency = 1
-    bubble.LayoutOrder = #MessagesFrame:GetChildren() + 1
-
-    local content = Instance.new("Frame")
-    content.Name = "Content"
-    content.Size = UDim2.new(0.75, 0, 0, 0)
-    content.AutomaticSize = Enum.AutomaticSize.Y
-    content.Position = UDim2.new(0.25, 0, 0, 0)
-    content.AnchorPoint = Vector2.new(0, 0)
-    content.BackgroundColor3 = Theme.User_BG
-    content.BorderSizePixel = 0
-    MakeCorner(content, 12)
-    MakeStroke(content, Theme.Accent_Dim, 0.5)
-    MakePadding(content, 10, 10, 16, 16)
-    content.Parent = bubble
-
-    local label = Instance.new("TextLabel")
-    label.Name = "Text"
-    label.Size = UDim2.new(1, 0, 0, 0)
-    label.AutomaticSize = Enum.AutomaticSize.Y
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = Theme.Text_Primary
-    label.Font = Theme.Font_Body
-    label.TextSize = 13
-    label.TextWrapped = true
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = content
-
-    local senderLabel = Instance.new("TextLabel")
-    senderLabel.Size = UDim2.new(0, 60, 0, 14)
-    senderLabel.Position = UDim2.new(1, -4, 0, -18)
-    senderLabel.AnchorPoint = Vector2.new(1, 0)
-    senderLabel.BackgroundTransparency = 1
-    senderLabel.Text = "You"
-    senderLabel.TextColor3 = Theme.Accent_Dim
-    senderLabel.Font = Theme.Font_Body
-    senderLabel.TextSize = 9
-    senderLabel.TextXAlignment = Enum.TextXAlignment.Right
-    senderLabel.Parent = content
-
-    bubble.Parent = MessagesFrame
-
-    -- Animate in
-    bubble.Position = UDim2.new(0.15, 0, 0, 0)
-    SmoothTween(bubble, {Position = UDim2.new(0, 0, 0, 0)}, 0.3, Enum.EasingStyle.Quart)
-
-    return bubble
+local function defaultScale()
+	local v = gui.AbsoluteSize
+	return math.clamp(math.min(v.X * 0.94 / PANEL_W, v.Y * 0.9 / PANEL_H), MIN_SCALE, 1.25)
 end
 
-local function CreateAIBubble(text)
-    local bubble = Instance.new("Frame")
-    bubble.Name = "AIMessage"
-    bubble.Size = UDim2.new(1, 0, 0, 0)
-    bubble.AutomaticSize = Enum.AutomaticSize.Y
-    bubble.BackgroundTransparency = 1
-    bubble.LayoutOrder = #MessagesFrame:GetChildren() + 1
-
-    local content = Instance.new("Frame")
-    content.Name = "Content"
-    content.Size = UDim2.new(0.75, 0, 0, 0)
-    content.AutomaticSize = Enum.AutomaticSize.Y
-    content.BackgroundColor3 = Theme.AI_BG
-    content.BorderSizePixel = 0
-    MakeCorner(content, 12)
-    MakeStroke(content, Theme.Border, 0.5)
-    MakePadding(content, 10, 10, 16, 16)
-    content.Parent = bubble
-
-    local aiIconFrame = Instance.new("Frame")
-    aiIconFrame.Size = UDim2.new(0, 22, 0, 22)
-    aiIconFrame.Position = UDim2.new(0, 14, 0, 12)
-    aiIconFrame.BackgroundColor3 = Theme.Accent
-    aiIconFrame.BorderSizePixel = 0
-    MakeCorner(aiIconFrame, 6)
-    aiIconFrame.Parent = bubble
-
-    local aiIconText = Instance.new("TextLabel")
-    aiIconText.Size = UDim2.new(1, 0, 1, 0)
-    aiIconText.BackgroundTransparency = 1
-    aiIconText.Text = "◆"
-    aiIconText.TextColor3 = Theme.BG_Darkest
-    aiIconText.Font = Theme.Font_Icon
-    aiIconText.TextSize = 11
-    aiIconText.Parent = aiIconFrame
-
-    local contentPad = Instance.new("UIPadding")
-    contentPad.PaddingLeft = UDim2.new(0, 38)
-    contentPad.Parent = bubble
-
-    local label = Instance.new("TextLabel")
-    label.Name = "Text"
-    label.Size = UDim2.new(1, -38, 0, 0)
-    label.AutomaticSize = Enum.AutomaticSize.Y
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = Theme.Text_Primary
-    label.Font = Theme.Font_Body
-    label.TextSize = 13
-    label.TextWrapped = true
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = bubble
-
-    local senderLabel = Instance.new("TextLabel")
-    senderLabel.Size = UDim2.new(0, 70, 0, 14)
-    senderLabel.Position = UDim2.new(0, 52, 0, 6)
-    senderLabel.AnchorPoint = Vector2.new(0, 0)
-    senderLabel.BackgroundTransparency = 1
-    senderLabel.Text = "Costudio AI"
-    senderLabel.TextColor3 = Theme.Accent
-    senderLabel.Font = Theme.Font_Heading
-    senderLabel.TextSize = 10
-    senderLabel.TextXAlignment = Enum.TextXAlignment.Left
-    senderLabel.Parent = bubble
-
-    bubble.Parent = MessagesFrame
-
-    -- Animate in
-    bubble.Position = UDim2.new(-0.15, 0, 0, 0)
-    SmoothTween(bubble, {Position = UDim2.new(0, 0, 0, 0)}, 0.3, Enum.EasingStyle.Quart)
-
-    return bubble, label
+local function clampHolder()
+	local v = gui.AbsoluteSize
+	local w, h = PANEL_W * scaler.Scale, PANEL_H * scaler.Scale
+	local x = math.clamp(holder.Position.X.Offset, 0, math.max(0, v.X - w))
+	local y = math.clamp(holder.Position.Y.Offset, 0, math.max(0, v.Y - h))
+	holder.Position = UDim2.fromOffset(x, y)
 end
 
--- ═══════════════════════════════════════════════
---  SESSION LIST REFRESH
--- ═══════════════════════════════════════════════
-function RefreshSessionList()
-    for _, child in ipairs(SessionScrollFrame:GetChildren()) do
-        if child:IsA("Frame") then
-            child:Destroy()
-        end
-    end
-
-    for i, session in ipairs(Sessions) do
-        local item = Instance.new("Frame")
-        item.Name = "Session_" .. session.Id
-        item.Size = UDim2.new(1, -8, 0, 46)
-        item.BackgroundColor3 = (ActiveSession and ActiveSession.Id == session.Id) and Theme.BG_Card or Theme.BG_Dark
-        item.BorderSizePixel = 0
-        MakeCorner(item, 10)
-        item.LayoutOrder = i
-
-        if ActiveSession and ActiveSession.Id == session.Id then
-            MakeStroke(item, Theme.Accent_Dim, 1)
-        else
-            MakeStroke(item, Color3.fromRGB(0,0,0), 0)
-        end
-
-        item.Parent = SessionScrollFrame
-
-        -- Session icon
-        local sessionIcon = Instance.new("TextLabel")
-        sessionIcon.Size = UDim2.new(0, 18, 0, 18)
-        sessionIcon.Position = UDim2.new(0, 12, 0.5, 0)
-        sessionIcon.AnchorPoint = Vector2.new(0, 0.5)
-        sessionIcon.BackgroundTransparency = 1
-        sessionIcon.Text = "◈"
-        sessionIcon.TextColor3 = (ActiveSession and ActiveSession.Id == session.Id) and Theme.Accent or Theme.Text_Muted
-        sessionIcon.Font = Theme.Font_Icon
-        sessionIcon.TextSize = 14
-        sessionIcon.Parent = item
-
-        -- Session title
-        local titleLabel = Instance.new("TextLabel")
-        titleLabel.Size = UDim2.new(1, -70, 0, 16)
-        titleLabel.Position = UDim2.new(0, 36, 0, 10)
-        titleLabel.BackgroundTransparency = 1
-        titleLabel.Text = session.Title
-        titleLabel.TextColor3 = (ActiveSession and ActiveSession.Id == session.Id) and Theme.Text_Primary or Theme.Text_Secondary
-        titleLabel.Font = Theme.Font_Heading
-        titleLabel.TextSize = 12
-        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-        titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
-        titleLabel.Parent = item
-
-        -- Time label
-        local timeLabel = Instance.new("TextLabel")
-        timeLabel.Size = UDim2.new(1, -70, 0, 12)
-        timeLabel.Position = UDim2.new(0, 36, 0, 27)
-        timeLabel.BackgroundTransparency = 1
-        timeLabel.Text = os.date("%I:%M %p", session.CreatedAt)
-        timeLabel.TextColor3 = Theme.Text_Muted
-        timeLabel.Font = Theme.Font_Body
-        timeLabel.TextSize = 9
-        timeLabel.TextXAlignment = Enum.TextXAlignment.Left
-        timeLabel.Parent = item
-
-        -- Delete button (FIXED: proper sizing, positioning, and click handling)
-        local deleteBtn = Instance.new("TextButton")
-        deleteBtn.Name = "DeleteBtn"
-        deleteBtn.Size = UDim2.new(0, 28, 0, 28)
-        deleteBtn.Position = UDim2.new(1, -38, 0.5, 0)
-        deleteBtn.AnchorPoint = Vector2.new(0, 0.5)
-        deleteBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        deleteBtn.BackgroundTransparency = 1
-        deleteBtn.BorderSizePixel = 0
-        deleteBtn.Text = "✕"
-        deleteBtn.TextColor3 = Theme.Text_Muted
-        deleteBtn.Font = Theme.Font_Heading
-        deleteBtn.TextSize = 11
-        deleteBtn.AutoButtonColor = false
-        MakeCorner(deleteBtn, 6)
-        deleteBtn.Parent = item
-
-        -- Hover effects for delete button
-        deleteBtn.MouseEnter:Connect(function()
-            SmoothTween(deleteBtn, {BackgroundColor3 = Theme.Danger, BackgroundTransparency = 0.15, TextColor3 = Color3.fromRGB(255, 255, 255)}, 0.15)
-        end)
-        deleteBtn.MouseLeave:Connect(function()
-            SmoothTween(deleteBtn, {BackgroundColor3 = Color3.fromRGB(0,0,0), BackgroundTransparency = 1, TextColor3 = Theme.Text_Muted}, 0.15)
-        end)
-
-        -- Delete click handler (using MouseButton1Click for reliable click detection)
-        deleteBtn.MouseButton1Click:Connect(function()
-            local sessionId = session.Id
-            -- Animate deletion
-            SmoothTween(item, {Size = UDim2.new(1, -8, 0, 0), BackgroundTransparency = 1}, 0.2):Play()
-            task.delay(0.25, function()
-                DeleteSession(sessionId)
-                RefreshSessionList()
-                RefreshChatArea()
-            end)
-        end)
-
-        -- Click to switch session
-        item.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                -- Don't switch if clicking delete button
-                local mousePos = UserInputService:GetMouseLocation()
-                local btnPos = deleteBtn.AbsolutePosition
-                local btnSize = deleteBtn.AbsoluteSize
-                if mousePos.X >= btnPos.X and mousePos.X <= btnPos.X + btnSize.X
-                    and mousePos.Y >= btnPos.Y and mousePos.Y <= btnPos.Y + btnSize.Y then
-                    return
-                end
-
-                ActiveSession = session
-                RefreshSessionList()
-                RefreshChatArea()
-            end
-        end)
-
-        -- Hover effect for session item
-        item.MouseEnter:Connect(function()
-            if not (ActiveSession and ActiveSession.Id == session.Id) then
-                SmoothTween(item, {BackgroundColor3 = Theme.BG_Hover}, 0.15)
-            end
-        end)
-        item.MouseLeave:Connect(function()
-            if not (ActiveSession and ActiveSession.Id == session.Id) then
-                SmoothTween(item, {BackgroundColor3 = Theme.BG_Dark}, 0.15)
-            end
-        end)
-    end
+local function placeInitially()
+	local v = gui.AbsoluteSize
+	scaler.Scale = defaultScale()
+	local w, h = PANEL_W * scaler.Scale, PANEL_H * scaler.Scale
+	holder.Position = UDim2.fromOffset(math.max(0, (v.X - w) / 2), math.max(0, (v.Y - h) / 2))
+	placed = true
 end
 
--- ═══════════════════════════════════════════════
---  CHAT AREA REFRESH
--- ═══════════════════════════════════════════════
-function RefreshChatArea()
-    -- Clear messages
-    for _, child in ipairs(MessagesFrame:GetChildren()) do
-        if child:IsA("Frame") or child:IsA("TextLabel") then
-            child:Destroy()
-        end
-    end
-
-    if not ActiveSession or #ActiveSession.Messages == 0 then
-        WelcomeFrame.Visible = true
-        MessagesFrame.Visible = false
-        ChatTitle.Text = "Costudio AI"
-        ChatSubtitle.Text = "Always online • Ready to assist"
-        return
-    end
-
-    WelcomeFrame.Visible = false
-    MessagesFrame.Visible = true
-    ChatTitle.Text = ActiveSession.Title
-    ChatSubtitle.Text = #ActiveSession.Messages .. " messages • Active session"
-
-    for _, msg in ipairs(ActiveSession.Messages) do
-        if msg.Role == "user" then
-            CreateUserBubble(msg.Content)
-        else
-            CreateAIBubble(msg.Content)
-        end
-    end
-
-    -- Scroll to bottom
-    task.defer(function()
-        MessagesFrame.CanvasPosition = Vector2.new(0, 99999)
-    end)
-end
-
--- ═══════════════════════════════════════════════
---  SEND MESSAGE LOGIC
--- ═══════════════════════════════════════════════
-local isGenerating = false
-
-local function SendMessage()
-    if isGenerating then return end
-    local text = PromptInput.Text
-    if text == "" or text:match("^%s*$") then return end
-
-    -- Ensure we have an active session
-    if not ActiveSession then
-        CreateSession()
-        RefreshSessionList()
-    end
-
-    -- Hide welcome, show messages
-    WelcomeFrame.Visible = false
-    MessagesFrame.Visible = true
-
-    -- Add user message
-    local userMsg = {Role = "user", Content = text}
-    table.insert(ActiveSession.Messages, userMsg)
-
-    -- Update session title from first message
-    if #ActiveSession.Messages == 1 then
-        ActiveSession.Title = text:sub(1, 28) .. (#text > 28 and "..." or "")
-        RefreshSessionList()
-        ChatTitle.Text = ActiveSession.Title
-    end
-
-    ChatSubtitle.Text = #ActiveSession.Messages .. " messages • Active session"
-
-    -- Create user bubble
-    CreateUserBubble(text)
-
-    -- Clear input
-    PromptInput.Text = ""
-
-    -- Scroll to bottom
-    task.defer(function()
-        MessagesFrame.CanvasPosition = Vector2.new(0, 99999)
-    end)
-
-    -- Generate AI response
-    isGenerating = true
-    SendBtn.Text = "..."
-    SendBtn.BackgroundColor3 = Theme.Accent_Dim
-
-    -- Show typing indicator
-    local typingBubble, typingLabel = CreateAIBubble("● ● ●")
-
-    -- Animate typing dots
-    local dotCount = 0
-    local typingConn
-    typingConn = RunService.Heartbeat:Connect(function()
-        if not isGenerating then
-            typingConn:Disconnect()
-            return
-        end
-        dotCount = dotCount + 1
-        if dotCount % 15 == 0 then
-            local dots = {"●", "● ●", "● ● ●", "● ●"}
-            typingLabel.Text = dots[(math.floor(dotCount / 15) % #dots) + 1]
-        end
-    end)
-
-    -- Get AI response in a separate thread
-    task.spawn(function()
-        local response = GetAIResponse(text)
-
-        -- Clean up typing indicator
-        typingConn:Disconnect()
-        typingBubble:Destroy()
-
-        -- Add AI message
-        local aiMsg = {Role = "assistant", Content = response}
-        table.insert(ActiveSession.Messages, aiMsg)
-
-        -- Create AI bubble with typewriter effect
-        local aiBubble, aiLabel = CreateAIBubble("")
-        TypewriterEffect(aiLabel, response, 0.015)
-
-        ChatSubtitle.Text = #ActiveSession.Messages .. " messages • Active session"
-
-        -- Scroll to bottom
-        task.defer(function()
-            MessagesFrame.CanvasPosition = Vector2.new(0, 99999)
-        end)
-
-        isGenerating = false
-        SendBtn.Text = "↑"
-        SendBtn.BackgroundColor3 = Theme.Accent
-    end)
-end
-
--- ═══════════════════════════════════════════════
---  EVENT CONNECTIONS
--- ═══════════════════════════════════════════════
-SendBtn.MouseButton1Click:Connect(SendMessage)
-
-PromptInput.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        SendMessage()
-    end
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+	if not placed then
+		return
+	end
+	scaler.Scale = math.min(scaler.Scale, maxScaleFor(0, 0))
+	clampHolder()
 end)
 
--- ═══════════════════════════════════════════════
---  ENTRANCE ANIMATION
--- ═══════════════════════════════════════════════
-MainContainer.Size = UDim2.new(0, 820, 0, 0)
-MainContainer.BackgroundTransparency = 1
-MainContainer.ClipsDescendants = false
+---------------------------------------------------------------------
+-- Header
+---------------------------------------------------------------------
+local header = new("Frame", {
+	Name = "Header",
+	Size = UDim2.new(1, 0, 0, 56),
+	BackgroundColor3 = THEME.header,
+	BorderSizePixel = 0,
+	Active = true,
+}, panel)
+corner(header, 16)
+new("Frame", {
+	Position = UDim2.fromOffset(0, 40),
+	Size = UDim2.new(1, 0, 0, 16),
+	BackgroundColor3 = THEME.header,
+	BorderSizePixel = 0,
+}, header)
 
-task.defer(function()
-    task.wait(0.1)
-    MainContainer.ClipsDescendants = true
-    SmoothTween(MainContainer, {Size = UDim2.new(0, 820, 0, 560), BackgroundTransparency = 0}, 0.5, Enum.EasingStyle.Back):Play()
+local badge = new("Frame", {
+	Position = UDim2.fromOffset(16, 12),
+	Size = UDim2.fromOffset(32, 32),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+}, header)
+corner(badge, 9)
+new("UIGradient", { Color = ColorSequence.new(THEME.accentSoft, THEME.accent), Rotation = 60 }, badge)
+textLabel(badge, "3D", {
+	Size = UDim2.fromScale(1, 1),
+	Font = Enum.Font.GothamBlack,
+	TextSize = 14,
+	TextColor3 = THEME.dark,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+
+textLabel(header, "DZ HUP  Name Maker", {
+	Position = UDim2.fromOffset(58, 10),
+	Size = UDim2.new(1, -260, 0, 20),
+	Font = Enum.Font.GothamBold,
+	TextSize = 15,
+})
+textLabel(header, "Design your name in 3D letters", {
+	Position = UDim2.fromOffset(58, 31),
+	Size = UDim2.new(1, -260, 0, 16),
+	TextSize = 11,
+	TextColor3 = THEME.muted,
+})
+
+-- Glowing RXDZ logo
+local logoHolder = new("Frame", {
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -60, 0.5, 0),
+	Size = UDim2.fromOffset(70, 28),
+	BackgroundTransparency = 1,
+}, header)
+local logoGlow = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.new(1, 14, 1, 14),
+	BackgroundColor3 = THEME.accent,
+	BackgroundTransparency = 0.82,
+	BorderSizePixel = 0,
+}, logoHolder)
+corner(logoGlow, 20)
+local logoPill = new("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+}, logoHolder)
+corner(logoPill, 14)
+local logoStroke = stroke(logoPill, THEME.accent, 0.1, 1.5)
+local logoText = textLabel(logoPill, "RXDZ", {
+	Size = UDim2.fromScale(1, 1),
+	Font = Enum.Font.GothamBlack,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+local logoGradient = new("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, THEME.accent),
+		ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+		ColorSequenceKeypoint.new(1, THEME.accent),
+	}),
+	Offset = Vector2.new(-1, 0),
+}, logoText)
+loop(logoGlow, 1.3, { BackgroundTransparency = 0.55, Size = UDim2.new(1, 22, 1, 22) })
+loop(logoStroke, 1.3, { Transparency = 0.7 })
+loop(logoGradient, 2, { Offset = Vector2.new(1, 0) }, Enum.EasingStyle.Linear, false)
+
+local closeButton = makeButton(header, {
+	Text = "X",
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -14, 0.5, 0),
+	Size = UDim2.fromOffset(32, 32),
+	TextSize = 13,
+	Font = Enum.Font.GothamBlack,
+	TextColor3 = THEME.muted,
+}, { fill = THEME.surface, stroke = THEME.line, strokeTransparency = 0.3, radius = 9, hover = THEME.danger })
+closeButton.MouseEnter:Connect(function()
+	tween(closeButton, 0.12, { TextColor3 = THEME.text })
+end)
+closeButton.MouseLeave:Connect(function()
+	tween(closeButton, 0.12, { TextColor3 = THEME.muted })
 end)
 
--- ═══════════════════════════════════════════════
---  INITIALIZE
--- ═══════════════════════════════════════════════
-CreateSession()
-RefreshSessionList()
+local sweep = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 56),
+	Size = UDim2.new(1, 0, 0, 1),
+	BackgroundColor3 = THEME.accent,
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+	ZIndex = 5,
+}, panel)
+new("UIGradient", {
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.5, 0),
+		NumberSequenceKeypoint.new(1, 1),
+	}),
+}, sweep)
 
-print("[Costudio AI] Loaded successfully — Premium Edition v2.0")
+---------------------------------------------------------------------
+-- Tabs and pages
+---------------------------------------------------------------------
+local TAB_Y, CONTENT_Y = 70, 120
+
+local tabTrack = new("Frame", {
+	Position = UDim2.fromOffset(16, TAB_Y),
+	Size = UDim2.fromOffset(588, 38),
+	BackgroundColor3 = THEME.field,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+}, panel)
+corner(tabTrack, 10)
+stroke(tabTrack, THEME.line, 0.5, 1)
+
+local tabIndicator = new("Frame", {
+	Position = UDim2.new(0, 4, 0, 4),
+	Size = UDim2.new(1 / 3, -8, 1, -8),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+}, tabTrack)
+corner(tabIndicator, 7)
+new("UIGradient", { Color = ColorSequence.new(THEME.accentSoft, THEME.accent), Rotation = 90 }, tabIndicator)
+
+local content = new("Frame", {
+	Position = UDim2.fromOffset(16, CONTENT_Y),
+	Size = UDim2.fromOffset(588, 300),
+	BackgroundTransparency = 1,
+}, panel)
+local createPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, content)
+local listPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
+local aboutPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
+local pages = { createPage, listPage, aboutPage }
+
+local TAB_TITLES = { "Create", "My Names", "Creator" }
+local tabButtons = {}
+for i, title in ipairs(TAB_TITLES) do
+	tabButtons[i] = new("TextButton", {
+		Position = UDim2.new((i - 1) / 3, 0, 0, 0),
+		Size = UDim2.new(1 / 3, 0, 1, 0),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = title,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		TextColor3 = THEME.text,
+		ZIndex = 3,
+	}, tabTrack)
+end
+
+textLabel(panel, "Drag the bottom-right corner to resize", {
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -10),
+	Size = UDim2.fromOffset(400, 14),
+	TextSize = 10,
+	TextColor3 = THEME.muted,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+
+---------------------------------------------------------------------
+-- Toast
+---------------------------------------------------------------------
+local toast = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, 24),
+	AutomaticSize = Enum.AutomaticSize.XY,
+	BackgroundColor3 = THEME.header,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ZIndex = 30,
+	Visible = false,
+}, panel)
+corner(toast, 10)
+local toastStroke = stroke(toast, THEME.line, 1, 1)
+new("UIPadding", {
+	PaddingTop = UDim.new(0, 8),
+	PaddingBottom = UDim.new(0, 8),
+	PaddingLeft = UDim.new(0, 16),
+	PaddingRight = UDim.new(0, 16),
+}, toast)
+local toastLabel = textLabel(toast, "", {
+	AutomaticSize = Enum.AutomaticSize.XY,
+	Size = UDim2.new(),
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextTransparency = 1,
+	ZIndex = 31,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+
+local toastToken = 0
+local function showToast(message, good)
+	toastToken += 1
+	local token = toastToken
+	local color = good and THEME.success or THEME.danger
+
+	toastLabel.Text = message
+	toastLabel.TextColor3 = color
+	toastStroke.Color = color
+	toast.Visible = true
+	toast.Position = UDim2.new(0.5, 0, 1, 24)
+	tween(toast, 0.3, { Position = UDim2.new(0.5, 0, 1, -30), BackgroundTransparency = 0.05 }, Enum.EasingStyle.Quint)
+	tween(toastLabel, 0.2, { TextTransparency = 0 })
+	tween(toastStroke, 0.2, { Transparency = 0.35 })
+
+	task.delay(3.2, function()
+		if token ~= toastToken then
+			return
+		end
+		tween(toast, 0.22, { Position = UDim2.new(0.5, 0, 1, 24), BackgroundTransparency = 1 })
+		tween(toastLabel, 0.2, { TextTransparency = 1 })
+		tween(toastStroke, 0.2, { Transparency = 1 })
+		task.delay(0.25, function()
+			if token == toastToken then
+				toast.Visible = false
+			end
+		end)
+	end)
+end
+
+---------------------------------------------------------------------
+-- Create page: settings card
+---------------------------------------------------------------------
+local form = new("Frame", {
+	Size = UDim2.fromOffset(350, 300),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+}, createPage)
+corner(form, 12)
+stroke(form, THEME.line, 0.5, 1)
+
+local function sectionTitle(parent, text, y)
+	return textLabel(parent, text, {
+		Position = UDim2.fromOffset(16, y),
+		Size = UDim2.new(1, -32, 0, 16),
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = THEME.muted,
+	})
+end
+
+sectionTitle(form, "NAME", 12)
+local counter = textLabel(form, "0/" .. CONFIG.MaxNameLength, {
+	Position = UDim2.fromOffset(16, 12),
+	Size = UDim2.new(1, -32, 0, 16),
+	TextSize = 11,
+	TextColor3 = THEME.muted,
+	TextXAlignment = Enum.TextXAlignment.Right,
+})
+
+local nameBox = new("TextBox", {
+	Position = UDim2.fromOffset(16, 32),
+	Size = UDim2.fromOffset(318, 42),
+	BackgroundColor3 = THEME.field,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	PlaceholderText = "Type your name...",
+	PlaceholderColor3 = THEME.muted,
+	Text = "",
+	TextColor3 = THEME.text,
+	TextSize = 17,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Center,
+}, form)
+corner(nameBox, 10)
+local nameStroke = stroke(nameBox, THEME.line, 0.35, 1)
+nameBox.Focused:Connect(function()
+	tween(nameStroke, 0.18, { Color = THEME.accent, Transparency = 0 })
+end)
+nameBox.FocusLost:Connect(function()
+	tween(nameStroke, 0.18, { Color = THEME.line, Transparency = 0.35 })
+end)
+
+sectionTitle(form, "LETTER COLOR", 88)
+local swatchGrid = new("Frame", {
+	Position = UDim2.fromOffset(16, 108),
+	Size = UDim2.fromOffset(318, 59),
+	BackgroundTransparency = 1,
+}, form)
+new("UIGridLayout", {
+	CellSize = UDim2.fromOffset(44, 26),
+	CellPadding = UDim2.fromOffset(10, 7),
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, swatchGrid)
+
+sectionTitle(form, "MATERIAL", 178)
+local styleRow = new("Frame", {
+	Position = UDim2.fromOffset(16, 198),
+	Size = UDim2.fromOffset(318, 30),
+	BackgroundTransparency = 1,
+}, form)
+new("UIGridLayout", {
+	CellSize = UDim2.fromOffset(58, 30),
+	CellPadding = UDim2.fromOffset(7, 0),
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, styleRow)
+
+local createButton = makeButton(form, {
+	Text = "CREATE 3D NAME",
+	Position = UDim2.fromOffset(16, 242),
+	Size = UDim2.fromOffset(318, 46),
+	TextSize = 14,
+	Font = Enum.Font.GothamBlack,
+	TextColor3 = THEME.dark,
+}, { fill = THEME.accent, hover = THEME.accentSoft, stroke = THEME.accentSoft, strokeTransparency = 0.5, radius = 11 })
+
+---------------------------------------------------------------------
+-- Create page: preview card
+---------------------------------------------------------------------
+local previewCard = new("Frame", {
+	Position = UDim2.fromOffset(362, 0),
+	Size = UDim2.fromOffset(226, 300),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+}, createPage)
+corner(previewCard, 12)
+stroke(previewCard, THEME.line, 0.5, 1)
+
+textLabel(previewCard, "PREVIEW", {
+	Position = UDim2.fromOffset(14, 12),
+	Size = UDim2.new(1, -28, 0, 16),
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextColor3 = THEME.muted,
+})
+
+local stage = new("Frame", {
+	Position = UDim2.fromOffset(12, 34),
+	Size = UDim2.fromOffset(202, 190),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+}, previewCard)
+corner(stage, 10)
+new("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 45, 62)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 18, 26)),
+	}),
+	Rotation = 90,
+}, stage)
+stroke(stage, THEME.line, 0.55, 1)
+
+new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -26),
+	Size = UDim2.new(0.76, 0, 0, 1),
+	BackgroundColor3 = THEME.line,
+	BackgroundTransparency = 0.3,
+	BorderSizePixel = 0,
+}, stage)
+
+local previewText = textLabel(stage, "YOUR NAME", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.5, -10),
+	Size = UDim2.new(1, -24, 1, -64),
+	Font = Enum.Font.GothamBlack,
+	TextScaled = true,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+new("UITextSizeConstraint", { MaxTextSize = 44, MinTextSize = 10 }, previewText)
+local previewStroke = new("UIStroke", {
+	Thickness = 1.5,
+	Color = Color3.fromRGB(8, 8, 12),
+	Transparency = 0.2,
+	ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+}, previewText)
+local previewGradient = new("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(150, 150, 150)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+	}),
+	Rotation = 90,
+	Enabled = false,
+}, previewText)
+
+local infoStyle = textLabel(previewCard, "", {
+	Position = UDim2.fromOffset(14, 238),
+	Size = UDim2.new(1, -28, 0, 18),
+	TextSize = 12,
+})
+local infoColor = textLabel(previewCard, "", {
+	Position = UDim2.fromOffset(14, 262),
+	Size = UDim2.new(1, -28, 0, 18),
+	TextSize = 12,
+})
+local infoDot = new("Frame", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -14, 0, 265),
+	Size = UDim2.fromOffset(12, 12),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+}, previewCard)
+corner(infoDot, 6)
+stroke(infoDot, THEME.text, 0.6, 1)
+
+---------------------------------------------------------------------
+-- Selection state
+---------------------------------------------------------------------
+local selectedColorIndex = 1
+local selectedStyle = "Plastic"
+local swatches = {}
+
+local function selectedColor()
+	return PALETTE[selectedColorIndex][2]
+end
+
+local function updatePreview()
+	local color = selectedColor()
+	local text = nameBox.Text ~= "" and nameBox.Text or "YOUR NAME"
+	previewText.Text = text
+	previewText.TextColor3 = color
+	previewText.TextTransparency = 0
+	previewGradient.Enabled = false
+	previewStroke.Color = Color3.fromRGB(8, 8, 12)
+	previewStroke.Thickness = 1.5
+	previewStroke.Transparency = 0.2
+
+	if selectedStyle == "Neon" then
+		previewStroke.Color = color
+		previewStroke.Thickness = 3
+		previewStroke.Transparency = 0.55
+	elseif selectedStyle == "Metal" then
+		previewGradient.Enabled = true
+	elseif selectedStyle == "Glass" then
+		previewText.TextTransparency = 0.3
+		previewStroke.Color = Color3.new(1, 1, 1)
+		previewStroke.Transparency = 0.5
+	elseif selectedStyle == "Modern" then
+		previewText.TextTransparency = 0.88
+		previewStroke.Color = color
+		previewStroke.Thickness = 2
+		previewStroke.Transparency = 0.05
+	end
+
+	infoStyle.Text = "Material: " .. (STYLE_TITLES[selectedStyle] or selectedStyle)
+	infoColor.Text = "Color: " .. PALETTE[selectedColorIndex][1]
+	infoDot.BackgroundColor3 = color
+end
+
+for index, item in ipairs(PALETTE) do
+	local swatch = new("TextButton", {
+		BackgroundColor3 = item[2],
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+		Text = "",
+		LayoutOrder = index,
+	}, swatchGrid)
+	corner(swatch, 8)
+	local ring = stroke(swatch, THEME.accentSoft, 1, 2)
+	swatches[index] = ring
+	swatch.MouseEnter:Connect(function()
+		if selectedColorIndex ~= index then
+			tween(ring, 0.1, { Transparency = 0.6 })
+		end
+	end)
+	swatch.MouseLeave:Connect(function()
+		if selectedColorIndex ~= index then
+			tween(ring, 0.1, { Transparency = 1 })
+		end
+	end)
+	swatch.Activated:Connect(function()
+		selectedColorIndex = index
+		for i, otherRing in ipairs(swatches) do
+			tween(otherRing, 0.14, { Transparency = i == index and 0 or 1 })
+		end
+		updatePreview()
+	end)
+end
+swatches[1].Transparency = 0
+
+local chips = {}
+local function setStyle(key)
+	selectedStyle = key
+	for _, chip in ipairs(chips) do
+		local active = chip.key == key
+		tween(chip.button, 0.14, { BackgroundColor3 = active and THEME.accent or THEME.surface2 })
+		chip.button.TextColor3 = active and THEME.dark or THEME.text
+		chip.stroke.Transparency = active and 1 or 0.4
+	end
+	updatePreview()
+end
+
+for index, item in ipairs(STYLES) do
+	local button = new("TextButton", {
+		Text = item.title,
+		TextSize = 11,
+		Font = Enum.Font.GothamBold,
+		TextColor3 = THEME.text,
+		BackgroundColor3 = THEME.surface2,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+		LayoutOrder = index,
+	}, styleRow)
+	corner(button, 8)
+	local chip = { key = item.key, button = button, stroke = stroke(button, THEME.line, 0.4, 1) }
+	table.insert(chips, chip)
+	button.MouseEnter:Connect(function()
+		if selectedStyle ~= chip.key then
+			tween(button, 0.1, { BackgroundColor3 = THEME.line })
+		end
+	end)
+	button.MouseLeave:Connect(function()
+		if selectedStyle ~= chip.key then
+			tween(button, 0.1, { BackgroundColor3 = THEME.surface2 })
+		end
+	end)
+	button.Activated:Connect(function()
+		setStyle(item.key)
+	end)
+end
+
+nameBox:GetPropertyChangedSignal("Text"):Connect(function()
+	local text = nameBox.Text
+	local length = utf8.len(text)
+	if length and length > CONFIG.MaxNameLength then
+		local cut = utf8.offset(text, CONFIG.MaxNameLength + 1)
+		if cut then
+			nameBox.Text = string.sub(text, 1, cut - 1)
+			return
+		end
+	end
+	counter.Text = string.format("%d/%d", length or 0, CONFIG.MaxNameLength)
+	updatePreview()
+end)
+
+---------------------------------------------------------------------
+-- 3D engine (letters loaded from asset IDs)
+---------------------------------------------------------------------
+local templates = {}
+local packIndex = nil
+local packFailed = false
+
+local function toModel(source)
+	local copy = source:Clone()
+	if not copy then
+		return nil
+	end
+	for _, item in ipairs(copy:GetDescendants()) do
+		if item:IsA("LuaSourceContainer") then
+			item:Destroy()
+		end
+	end
+	if copy:IsA("LuaSourceContainer") then
+		copy:Destroy()
+		return nil
+	end
+	if copy:IsA("Model") then
+		copy.PrimaryPart = nil
+		return copy
+	end
+	local container = Instance.new("Model")
+	container.Name = source.Name
+	if copy:IsA("BasePart") then
+		copy.Parent = container
+		return container
+	end
+	if copy:IsA("Folder") then
+		for _, child in ipairs(copy:GetChildren()) do
+			child.Parent = container
+		end
+		copy:Destroy()
+		return container
+	end
+	copy:Destroy()
+	container:Destroy()
+	return nil
+end
+
+local function getPackIndex()
+	if packIndex then
+		return packIndex
+	end
+	if packFailed or CONFIG.PackAssetId == 0 then
+		return nil
+	end
+	local root = loadObject(CONFIG.PackAssetId)
+	if not root then
+		packFailed = true
+		return nil
+	end
+	local index = {}
+	local function scan(container)
+		for _, child in ipairs(container:GetChildren()) do
+			local key = string.upper(child.Name)
+			if #key == 1 and (child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder")) then
+				if not index[key] then
+					index[key] = child
+				end
+			end
+		end
+	end
+	scan(root)
+	if next(index) == nil then
+		for _, item in ipairs(root:GetDescendants()) do
+			if item.Name == "Letters" and (item:IsA("Folder") or item:IsA("Model")) then
+				scan(item)
+				break
+			end
+		end
+	end
+	if next(index) == nil then
+		packFailed = true
+		return nil
+	end
+	packIndex = index
+	return index
+end
+
+local function getTemplate(key, displayChar)
+	local cached = templates[key]
+	if cached then
+		return cached
+	end
+
+	local source = nil
+	local index = getPackIndex()
+	if index then
+		source = index[key]
+	end
+	if not source then
+		local id = CONFIG.LetterAssetIds[key] or CONFIG.LetterAssetIds[string.lower(key)]
+		if id then
+			source = loadObject(id)
+		end
+	end
+	if not source then
+		if CONFIG.PackAssetId == 0 and next(CONFIG.LetterAssetIds) == nil then
+			return nil, "Letter asset IDs are not set. Fill PackAssetId or LetterAssetIds in CONFIG."
+		end
+		return nil, 'Letter "' .. displayChar .. '" is not available'
+	end
+
+	local model = toModel(source)
+	if not model then
+		return nil, 'Could not read the model for "' .. displayChar .. '"'
+	end
+
+	local pivot = model:GetPivot()
+	model:PivotTo(CFrame.new(pivot.Position))
+
+	local ok, boxCFrame, size = pcall(function()
+		return model:GetBoundingBox()
+	end)
+	if not ok or size.X <= 0 or size.Y <= 0 then
+		model:Destroy()
+		return nil, 'The model for "' .. displayChar .. '" has no 3D parts'
+	end
+
+	local template = { model = model, center = boxCFrame.Position, width = size.X, height = size.Y }
+	templates[key] = template
+	return template
+end
+
+local function paintModel(model, color, style)
+	for _, item in ipairs(model:GetDescendants()) do
+		if item:IsA("BasePart") then
+			item.Anchored = true
+			item.CanCollide = false
+			item.CanTouch = false
+			item.CanQuery = false
+			item.CastShadow = true
+			item.Color = color
+			item.Material = style.material
+			item.Reflectance = style.reflectance
+			item.Transparency = style.transparency
+			if item:IsA("PartOperation") then
+				item.UsePartColor = true
+			elseif item:IsA("MeshPart") then
+				item.TextureID = ""
+			end
+		elseif item:IsA("SurfaceAppearance") then
+			item:Destroy()
+		end
+	end
+end
+
+local function flat(vector)
+	return Vector3.new(vector.X, 0, vector.Z)
+end
+
+local function getPlacement()
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return Vector3.new(0, 10, 0), CFrame.new(), Vector3.xAxis
+	end
+
+	local forward = flat(root.CFrame.LookVector)
+	if forward.Magnitude < 0.05 then
+		forward = Vector3.new(0, 0, -1)
+	end
+	forward = forward.Unit
+
+	local center = root.Position + forward * CONFIG.PlaceDistance + Vector3.new(0, CONFIG.HeightOffset, 0)
+
+	local towardPlayer = flat(root.Position - center)
+	if towardPlayer.Magnitude < 0.05 then
+		towardPlayer = -forward
+	end
+
+	local rotation = CFrame.lookAt(Vector3.zero, towardPlayer.Unit).Rotation
+	if not CONFIG.FrontFaceIsNegativeZ then
+		rotation = rotation * CFrame.Angles(0, math.pi, 0)
+	end
+
+	local right = flat(root.CFrame.RightVector)
+	if right.Magnitude < 0.05 then
+		right = Vector3.xAxis
+	end
+	return center, rotation, right.Unit
+end
+
+local function storePlacement(entry, center, rotation, right)
+	local comps = { rotation:GetComponents() }
+	entry.center = { center.X, center.Y, center.Z }
+	entry.rot = { table.unpack(comps, 4, 12) }
+	entry.right = { right.X, right.Y, right.Z }
+end
+
+local function modelNameOf(entry)
+	return "DZHUP_" .. entry.id
+end
+
+local function buildName(entry)
+	local style = STYLE_DEFS[entry.style] or STYLE_DEFS.Plastic
+	local color = Color3.fromRGB(entry.color[1], entry.color[2], entry.color[3])
+	local center = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
+	local rotation = CFrame.new(0, 0, 0, table.unpack(entry.rot))
+	local right = Vector3.new(entry.right[1], entry.right[2], entry.right[3])
+
+	local pieces = {}
+	local letterCount, widthSum = 0, 0
+	for _, codepoint in utf8.codes(entry.name) do
+		local character = utf8.char(codepoint)
+		if string.match(character, "^%s$") then
+			table.insert(pieces, { space = true })
+		else
+			local template, templateError = getTemplate(string.upper(character), character)
+			if not template then
+				return nil, templateError
+			end
+			table.insert(pieces, { template = template })
+			letterCount += 1
+			widthSum += template.width
+		end
+	end
+
+	local spaceWidth = letterCount > 0 and (widthSum / letterCount) * CONFIG.SpaceWidthRatio or 1
+	local totalWidth = -CONFIG.LetterGap
+	for _, piece in ipairs(pieces) do
+		piece.width = piece.template and piece.template.width or spaceWidth
+		totalWidth += piece.width + CONFIG.LetterGap
+	end
+
+	local group = Instance.new("Model")
+	group.Name = modelNameOf(entry)
+
+	local cursor = -totalWidth / 2
+	local firstPart = nil
+	for _, piece in ipairs(pieces) do
+		local template = piece.template
+		if template then
+			local letter = template.model:Clone()
+			paintModel(letter, color, style)
+
+			local target = center + right * (cursor + piece.width / 2) + Vector3.yAxis * (template.height / 2)
+			local placement = CFrame.new(target) * rotation * CFrame.new(-template.center)
+			letter:PivotTo(placement * letter:GetPivot())
+
+			letter.Name = template.model.Name
+			letter.Parent = group
+			firstPart = firstPart or letter:FindFirstChildWhichIsA("BasePart", true)
+		end
+		cursor += piece.width + CONFIG.LetterGap
+	end
+
+	if not firstPart then
+		group:Destroy()
+		return nil, "No letters could be created"
+	end
+
+	if entry.style == "Modern" then
+		local highlight = Instance.new("Highlight")
+		highlight.Name = "ModernEdge"
+		highlight.Adornee = group
+		highlight.FillTransparency = 1
+		highlight.OutlineColor = color
+		highlight.OutlineTransparency = 0.2
+		highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+		highlight.Parent = group
+	end
+
+	group.PrimaryPart = firstPart
+	group.Parent = namesFolder
+	return group
+end
+
+---------------------------------------------------------------------
+-- My Names page
+---------------------------------------------------------------------
+textLabel(listPage, "Saved names", {
+	Position = UDim2.fromOffset(4, 0),
+	Size = UDim2.new(1, -8, 0, 22),
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+})
+local listCount = textLabel(listPage, "", {
+	Position = UDim2.fromOffset(4, 0),
+	Size = UDim2.new(1, -8, 0, 22),
+	TextSize = 12,
+	TextColor3 = THEME.muted,
+	TextXAlignment = Enum.TextXAlignment.Right,
+})
+
+local listFrame = new("ScrollingFrame", {
+	Position = UDim2.fromOffset(0, 28),
+	Size = UDim2.new(1, 0, 1, -28),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = THEME.muted,
+	CanvasSize = UDim2.new(),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+}, listPage)
+corner(listFrame, 12)
+stroke(listFrame, THEME.line, 0.5, 1)
+new("UIPadding", {
+	PaddingTop = UDim.new(0, 8),
+	PaddingBottom = UDim.new(0, 8),
+	PaddingLeft = UDim.new(0, 8),
+	PaddingRight = UDim.new(0, 10),
+}, listFrame)
+new("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, listFrame)
+
+local emptyState = textLabel(listPage, "No saved names yet\nCreate your first one from the Create tab", {
+	Position = UDim2.fromOffset(0, 28),
+	Size = UDim2.new(1, 0, 1, -28),
+	TextSize = 13,
+	TextColor3 = THEME.muted,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+
+local renderList
+
+local function moveEntry(entry)
+	task.spawn(function()
+		local old = namesFolder:FindFirstChild(modelNameOf(entry))
+		if old then
+			old:Destroy()
+		end
+		local center, rotation, right = getPlacement()
+		storePlacement(entry, center, rotation, right)
+		local ok, group, err = pcall(buildName, entry)
+		persist()
+		if ok and group then
+			showToast("Moved in front of you", true)
+		else
+			showToast(tostring(ok and err or group or "Could not move the name"), false)
+		end
+	end)
+end
+
+local function deleteEntry(entry)
+	local old = namesFolder:FindFirstChild(modelNameOf(entry))
+	if old then
+		old:Destroy()
+	end
+	for i, item in ipairs(names) do
+		if item == entry then
+			table.remove(names, i)
+			break
+		end
+	end
+	persist()
+	renderList()
+	showToast("Name deleted", true)
+end
+
+function renderList()
+	for _, child in ipairs(listFrame:GetChildren()) do
+		if child:IsA("GuiObject") then
+			child:Destroy()
+		end
+	end
+
+	local sorted = table.clone(names)
+	table.sort(sorted, function(a, b)
+		return (a.order or 0) > (b.order or 0)
+	end)
+
+	tabButtons[2].Text = string.format("My Names (%d)", #sorted)
+	listCount.Text = string.format("%d / %d", #sorted, CONFIG.MaxNames)
+	emptyState.Visible = #sorted == 0
+	listFrame.Visible = #sorted > 0
+
+	for index, entry in ipairs(sorted) do
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 62),
+			BackgroundColor3 = THEME.surface2,
+			BorderSizePixel = 0,
+			LayoutOrder = index,
+		}, listFrame)
+		corner(row, 10)
+		stroke(row, THEME.line, 0.7, 1)
+
+		local dot = new("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 14, 0.5, 0),
+			Size = UDim2.fromOffset(32, 32),
+			BackgroundColor3 = Color3.fromRGB(entry.color[1], entry.color[2], entry.color[3]),
+			BorderSizePixel = 0,
+		}, row)
+		corner(dot, 9)
+		stroke(dot, THEME.text, 0.7, 1)
+
+		textLabel(row, tostring(entry.name), {
+			Position = UDim2.fromOffset(60, 10),
+			Size = UDim2.new(1, -230, 0, 24),
+			Font = Enum.Font.GothamBold,
+			TextSize = 17,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		textLabel(row, (STYLE_TITLES[entry.style] or "Plastic") .. " material", {
+			Position = UDim2.fromOffset(60, 35),
+			Size = UDim2.new(1, -230, 0, 16),
+			TextSize = 11,
+			TextColor3 = THEME.muted,
+		})
+
+		local deleteButton = makeButton(row, {
+			Text = "Delete",
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -10, 0.5, 0),
+			Size = UDim2.fromOffset(72, 32),
+			TextSize = 12,
+			TextColor3 = THEME.danger,
+		}, { fill = THEME.surface, stroke = THEME.danger, strokeTransparency = 0.6, radius = 8 })
+
+		local moveButton = makeButton(row, {
+			Text = "Move here",
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -90, 0.5, 0),
+			Size = UDim2.fromOffset(82, 32),
+			TextSize = 12,
+			TextColor3 = THEME.accent,
+		}, { fill = THEME.surface, stroke = THEME.accent, strokeTransparency = 0.6, radius = 8 })
+		moveButton.Activated:Connect(function()
+			moveEntry(entry)
+		end)
+
+		local armed = false
+		deleteButton.Activated:Connect(function()
+			if not armed then
+				armed = true
+				deleteButton.Text = "Confirm?"
+				deleteButton.TextColor3 = THEME.text
+				tween(deleteButton, 0.12, { BackgroundColor3 = THEME.danger })
+				task.delay(2.5, function()
+					if armed and deleteButton.Parent then
+						armed = false
+						deleteButton.Text = "Delete"
+						deleteButton.TextColor3 = THEME.danger
+						tween(deleteButton, 0.12, { BackgroundColor3 = THEME.surface })
+					end
+				end)
+				return
+			end
+			deleteEntry(entry)
+		end)
+	end
+end
+
+---------------------------------------------------------------------
+-- Creator page
+---------------------------------------------------------------------
+local aboutLeft = new("Frame", {
+	Size = UDim2.fromOffset(240, 300),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+}, aboutPage)
+corner(aboutLeft, 12)
+stroke(aboutLeft, THEME.line, 0.5, 1)
+
+local avatarHolder = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 30),
+	Size = UDim2.fromOffset(116, 116),
+	BackgroundTransparency = 1,
+}, aboutLeft)
+
+local avatarGlow = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(134, 134),
+	BackgroundColor3 = THEME.accent,
+	BackgroundTransparency = 0.86,
+	BorderSizePixel = 0,
+}, avatarHolder)
+corner(avatarGlow, 100)
+loop(avatarGlow, 1.4, { BackgroundTransparency = 0.62, Size = UDim2.fromOffset(150, 150) })
+
+local avatarRing = new("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = THEME.surface2,
+	BorderSizePixel = 0,
+}, avatarHolder)
+corner(avatarRing, 100)
+local ringStroke = stroke(avatarRing, Color3.new(1, 1, 1), 0, 3)
+local ringGradient = new("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, THEME.accentSoft),
+		ColorSequenceKeypoint.new(0.5, THEME.accent),
+		ColorSequenceKeypoint.new(1, THEME.accentSoft),
+	}),
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.55, 0.85),
+		NumberSequenceKeypoint.new(1, 0),
+	}),
+}, ringStroke)
+loop(ringGradient, 3, { Rotation = 360 }, Enum.EasingStyle.Linear, false)
+
+local avatarInner = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.new(1, -12, 1, -12),
+	BackgroundColor3 = THEME.header,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+}, avatarRing)
+corner(avatarInner, 100)
+local avatarLetter = textLabel(avatarInner, "R", {
+	Size = UDim2.fromScale(1, 1),
+	Font = Enum.Font.GothamBlack,
+	TextSize = 44,
+	TextColor3 = THEME.accent,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+local avatarImage = new("ImageLabel", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundTransparency = 1,
+	ScaleType = Enum.ScaleType.Crop,
+	Image = "",
+	Visible = false,
+}, avatarInner)
+
+textLabel(aboutLeft, CONFIG.Creator, {
+	Position = UDim2.fromOffset(0, 164),
+	Size = UDim2.new(1, 0, 0, 26),
+	Font = Enum.Font.GothamBlack,
+	TextSize = 21,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+textLabel(aboutLeft, "Creator of this system", {
+	Position = UDim2.fromOffset(0, 192),
+	Size = UDim2.new(1, 0, 0, 16),
+	TextSize = 12,
+	TextColor3 = THEME.muted,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+local communityPill = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 224),
+	Size = UDim2.fromOffset(120, 28),
+	BackgroundColor3 = THEME.surface2,
+	BorderSizePixel = 0,
+}, aboutLeft)
+corner(communityPill, 14)
+stroke(communityPill, THEME.accent, 0.55, 1)
+textLabel(communityPill, CONFIG.Community, {
+	Size = UDim2.fromScale(1, 1),
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextColor3 = THEME.accent,
+	TextXAlignment = Enum.TextXAlignment.Center,
+})
+
+local aboutRight = new("Frame", {
+	Position = UDim2.fromOffset(252, 0),
+	Size = UDim2.fromOffset(336, 300),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+}, aboutPage)
+corner(aboutRight, 12)
+stroke(aboutRight, THEME.line, 0.5, 1)
+
+textLabel(aboutRight, "CONNECT WITH ME", {
+	Position = UDim2.fromOffset(16, 14),
+	Size = UDim2.new(1, -32, 0, 16),
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextColor3 = THEME.muted,
+})
+
+local function copyLink(link, doneMessage)
+	if copyText(link) then
+		showToast(doneMessage, true)
+	else
+		showToast("Clipboard is not supported. " .. link, false)
+	end
+end
+
+local function contactCard(y, letter, color, title, sub, link, doneMessage)
+	local button = makeButton(aboutRight, {
+		Text = "",
+		Position = UDim2.fromOffset(16, y),
+		Size = UDim2.fromOffset(304, 68),
+	}, { fill = THEME.surface2, stroke = color, strokeTransparency = 0.6, radius = 12 })
+
+	local icon = new("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 14, 0.5, 0),
+		Size = UDim2.fromOffset(42, 42),
+		BackgroundColor3 = color,
+		BorderSizePixel = 0,
+	}, button)
+	corner(icon, 11)
+	textLabel(icon, letter, {
+		Size = UDim2.fromScale(1, 1),
+		Font = Enum.Font.GothamBlack,
+		TextSize = 18,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	textLabel(button, title, {
+		Position = UDim2.fromOffset(68, 14),
+		Size = UDim2.new(1, -150, 0, 20),
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+	})
+	textLabel(button, sub, {
+		Position = UDim2.fromOffset(68, 36),
+		Size = UDim2.new(1, -150, 0, 16),
+		TextSize = 11,
+		TextColor3 = THEME.muted,
+	})
+	local chip = new("Frame", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -12, 0.5, 0),
+		Size = UDim2.fromOffset(60, 26),
+		BackgroundColor3 = color,
+		BackgroundTransparency = 0.75,
+		BorderSizePixel = 0,
+	}, button)
+	corner(chip, 8)
+	textLabel(chip, "COPY", {
+		Size = UDim2.fromScale(1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	button.Activated:Connect(function()
+		copyLink(link, doneMessage)
+	end)
+end
+
+contactCard(44, "D", THEME.discord, "Discord", "Join the community server", CONFIG.Discord, "Discord link copied")
+contactCard(124, "W", THEME.whatsapp, "WhatsApp", "Follow the channel", CONFIG.WhatsApp, "WhatsApp link copied")
+
+textLabel(aboutRight, "Tap a card to copy its link,\nthen paste it in your browser.", {
+	Position = UDim2.fromOffset(16, 214),
+	Size = UDim2.new(1, -32, 0, 36),
+	TextSize = 11,
+	TextColor3 = THEME.muted,
+	TextWrapped = true,
+})
+textLabel(aboutRight, "Made by " .. CONFIG.Creator .. "  |  " .. CONFIG.Community, {
+	AnchorPoint = Vector2.new(0, 1),
+	Position = UDim2.new(0, 16, 1, -12),
+	Size = UDim2.new(1, -32, 0, 16),
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = THEME.accent,
+})
+
+-- Resolve the avatar picture without blocking the UI
+task.spawn(function()
+	local image = nil
+	if CONFIG.AvatarImageUrl ~= "" and hasFS and type(getcustomasset) == "function" then
+		local ok, result = pcall(function()
+			local data = game:HttpGet(CONFIG.AvatarImageUrl)
+			writefile("DZHUP_avatar.png", data)
+			return getcustomasset("DZHUP_avatar.png")
+		end)
+		if ok and result then
+			image = result
+		end
+	end
+	if not image and CONFIG.AvatarRobloxUserId > 0 then
+		image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", CONFIG.AvatarRobloxUserId)
+	end
+	if image then
+		avatarImage.Image = image
+		avatarImage.Visible = true
+		avatarLetter.Visible = false
+	end
+end)
+
+---------------------------------------------------------------------
+-- Tab switching
+---------------------------------------------------------------------
+local currentTab = 1
+local function switchTab(index, instant)
+	currentTab = index
+	for i, page in ipairs(pages) do
+		page.Visible = i == index
+		tabButtons[i].TextColor3 = i == index and THEME.dark or THEME.muted
+	end
+	local target = UDim2.new((index - 1) / 3, 4, 0, 4)
+	if instant then
+		tabIndicator.Position = target
+	else
+		tween(tabIndicator, 0.3, { Position = target }, Enum.EasingStyle.Quint)
+	end
+	if index == 2 then
+		renderList()
+	end
+end
+for i, button in ipairs(tabButtons) do
+	button.Activated:Connect(function()
+		switchTab(i)
+	end)
+end
+
+---------------------------------------------------------------------
+-- Resize handle
+---------------------------------------------------------------------
+local resizeHandle = new("TextButton", {
+	Name = "ResizeHandle",
+	AnchorPoint = Vector2.new(1, 1),
+	Position = UDim2.new(1, 0, 1, 0),
+	Size = UDim2.fromOffset(38, 38),
+	BackgroundTransparency = 1,
+	Text = "",
+	AutoButtonColor = false,
+	Active = true,
+	ZIndex = 20,
+}, panel)
+
+local gripDots = {}
+for row = 0, 2 do
+	for col = 0, 2 - row do
+		local dot = new("Frame", {
+			AnchorPoint = Vector2.new(1, 1),
+			Position = UDim2.new(1, -(9 + col * 6), 1, -(9 + row * 6)),
+			Size = UDim2.fromOffset(3, 3),
+			BackgroundColor3 = THEME.muted,
+			BorderSizePixel = 0,
+			ZIndex = 21,
+		}, resizeHandle)
+		corner(dot, 2)
+		table.insert(gripDots, dot)
+	end
+end
+local function tintGrip(color)
+	for _, dot in ipairs(gripDots) do
+		tween(dot, 0.12, { BackgroundColor3 = color })
+	end
+end
+resizeHandle.MouseEnter:Connect(function()
+	tintGrip(THEME.accent)
+end)
+resizeHandle.MouseLeave:Connect(function()
+	tintGrip(THEME.muted)
+end)
+
+---------------------------------------------------------------------
+-- Drag and resize
+---------------------------------------------------------------------
+local function isPointer(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+end
+local function pointOf(input)
+	return Vector2.new(input.Position.X, input.Position.Y)
+end
+
+local dragging, resizing = false, false
+local dragStart, startOffset = Vector2.zero, Vector2.zero
+local resizeStart, startScale = Vector2.zero, 1
+
+header.InputBegan:Connect(function(input)
+	if isPointer(input) and not resizing then
+		dragging = true
+		dragStart = pointOf(input)
+		startOffset = Vector2.new(holder.Position.X.Offset, holder.Position.Y.Offset)
+	end
+end)
+
+resizeHandle.InputBegan:Connect(function(input)
+	if isPointer(input) and not dragging then
+		resizing = true
+		resizeStart = pointOf(input)
+		startScale = scaler.Scale
+		tintGrip(THEME.accent)
+		tween(panelStroke, 0.12, { Color = THEME.accent, Transparency = 0.2 })
+	end
+end)
+
+on(UserInputService.InputChanged, function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
+	if dragging then
+		local delta = pointOf(input) - dragStart
+		holder.Position = UDim2.fromOffset(startOffset.X + delta.X, startOffset.Y + delta.Y)
+		clampHolder()
+	elseif resizing then
+		local delta = pointOf(input) - resizeStart
+		local x, y = holder.Position.X.Offset, holder.Position.Y.Offset
+		local target = startScale + (delta.X / PANEL_W + delta.Y / PANEL_H) / 2
+		scaler.Scale = math.clamp(target, MIN_SCALE, maxScaleFor(x, y))
+	end
+end)
+
+on(UserInputService.InputEnded, function(input)
+	if not isPointer(input) then
+		return
+	end
+	if resizing then
+		resizing = false
+		tintGrip(THEME.muted)
+		tween(panelStroke, 0.25, { Color = THEME.line, Transparency = 0.2 })
+	end
+	dragging = false
+end)
+
+---------------------------------------------------------------------
+-- Open / close animation
+---------------------------------------------------------------------
+local veil = new("Frame", {
+	Name = "Veil",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = THEME.bg,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ZIndex = 40,
+	Visible = false,
+}, panel)
+corner(veil, 16)
+
+local isOpen = false
+local openToken = 0
+
+local function setOpen(open)
+	if isOpen == open then
+		return
+	end
+	isOpen = open
+	openToken += 1
+	local token = openToken
+
+	tween(openButtonScale, 0.1, { Scale = 0.92 })
+	task.delay(0.1, function()
+		tween(openButtonScale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+	end)
+
+	if open then
+		if not placed then
+			placeInitially()
+		else
+			scaler.Scale = math.min(scaler.Scale, maxScaleFor(0, 0))
+			clampHolder()
+		end
+
+		holder.Visible = true
+		backdrop.Visible = true
+		veil.Visible = true
+		veil.BackgroundTransparency = 0
+		panel.Position = UDim2.new(0.5, 0, 0.5, 30)
+		popScale.Scale = 0.9
+		tabTrack.Position = UDim2.fromOffset(16, TAB_Y + 14)
+		content.Position = UDim2.fromOffset(16, CONTENT_Y + 22)
+		sweep.Size = UDim2.new(0, 0, 0, 1)
+		sweep.BackgroundTransparency = 0
+		panelStroke.Color = THEME.accent
+		panelStroke.Transparency = 0
+
+		tween(openStroke, 0.25, { Transparency = 0 })
+		tween(backdrop, 0.4, { BackgroundTransparency = 0.62 })
+		tween(veil, 0.45, { BackgroundTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0.05)
+		tween(panel, 0.6, { Position = UDim2.new(0.5, 0, 0.5, 0) }, Enum.EasingStyle.Quint)
+		tween(popScale, 0.6, { Scale = 1 }, Enum.EasingStyle.Quint)
+		tween(panelStroke, 0.9, { Color = THEME.line, Transparency = 0.2 }, Enum.EasingStyle.Sine)
+		tween(sweep, 0.7, { Size = UDim2.new(1, 0, 0, 1) }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out, 0.08)
+		tween(sweep, 0.5, { BackgroundTransparency = 0.6 }, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, 0.6)
+		tween(tabTrack, 0.5, { Position = UDim2.fromOffset(16, TAB_Y) }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out, 0.1)
+		tween(content, 0.55, { Position = UDim2.fromOffset(16, CONTENT_Y) }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out, 0.18)
+
+		task.delay(0.55, function()
+			if token == openToken and isOpen then
+				veil.Visible = false
+			end
+		end)
+	else
+		veil.Visible = true
+		tween(openStroke, 0.25, { Transparency = 0.45 })
+		tween(backdrop, 0.22, { BackgroundTransparency = 1 })
+		tween(veil, 0.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		tween(panel, 0.24, { Position = UDim2.new(0.5, 0, 0.5, 14) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+		tween(popScale, 0.24, { Scale = 0.95 }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+
+		task.delay(0.26, function()
+			if token == openToken and not isOpen then
+				holder.Visible = false
+				backdrop.Visible = false
+				veil.Visible = false
+			end
+		end)
+	end
+end
+
+openButton.Activated:Connect(function()
+	setOpen(not isOpen)
+end)
+closeButton.Activated:Connect(function()
+	setOpen(false)
+end)
+
+---------------------------------------------------------------------
+-- Create a name
+---------------------------------------------------------------------
+local busy = false
+
+local function setBusy(state)
+	busy = state
+	createButton.Text = state and "BUILDING LETTERS..." or "CREATE 3D NAME"
+	createButton.TextTransparency = state and 0.35 or 0
+end
+
+local function cleanName(value)
+	local name = string.gsub(value, "%c", "")
+	name = trim(name)
+	name = string.gsub(name, "%s+", " ")
+	local count = utf8.len(name)
+	if name == "" or not count or count > CONFIG.MaxNameLength then
+		return nil
+	end
+	return name
+end
+
+local function submit()
+	if busy then
+		return
+	end
+	local name = cleanName(nameBox.Text)
+	if not name then
+		showToast("Type a name (1 to " .. CONFIG.MaxNameLength .. " characters)", false)
+		return
+	end
+	if #names >= CONFIG.MaxNames then
+		showToast("Name limit reached. Delete one first.", false)
+		return
+	end
+
+	local color = selectedColor()
+	local order = 0
+	for _, item in ipairs(names) do
+		order = math.max(order, item.order or 0)
+	end
+
+	local entry = {
+		id = string.sub(string.gsub(HttpService:GenerateGUID(false), "-", ""), 1, 12),
+		order = order + 1,
+		name = name,
+		style = selectedStyle,
+		color = {
+			math.floor(color.R * 255 + 0.5),
+			math.floor(color.G * 255 + 0.5),
+			math.floor(color.B * 255 + 0.5),
+		},
+	}
+
+	setBusy(true)
+	task.spawn(function()
+		local center, rotation, right = getPlacement()
+		storePlacement(entry, center, rotation, right)
+
+		local ok, group, err = pcall(buildName, entry)
+		setBusy(false)
+		if not ok then
+			warn("[DZHUP] " .. tostring(group))
+			showToast("Could not build the name. Check the console.", false)
+			return
+		end
+		if not group then
+			showToast(tostring(err or "Could not create the name"), false)
+			return
+		end
+
+		table.insert(names, entry)
+		local saved = persist()
+		renderList()
+		if saved then
+			showToast("Name created and saved", true)
+		else
+			showToast("Name created (saving is not supported here)", true)
+		end
+	end)
+end
+createButton.Activated:Connect(submit)
+nameBox.FocusLost:Connect(function(enterPressed)
+	if enterPressed then
+		submit()
+	end
+end)
+
+---------------------------------------------------------------------
+-- Boot
+---------------------------------------------------------------------
+setStyle("Plastic")
+switchTab(1, true)
+updatePreview()
+renderList()
+
+genv.DZHUP_NameMakerCleanup = function()
+	for _, c in ipairs(conns) do
+		pcall(function()
+			c:Disconnect()
+		end)
+	end
+	pcall(function()
+		gui:Destroy()
+	end)
+	pcall(function()
+		namesFolder:Destroy()
+	end)
+end
+
+-- Restore saved names for this place
+task.spawn(function()
+	local warned = false
+	for _, entry in ipairs(names) do
+		local ok, group, err = pcall(buildName, entry)
+		if (not ok or not group) and not warned then
+			warned = true
+			warn("[DZHUP] Could not restore saved names: " .. tostring(ok and err or group))
+		end
+		task.wait()
+	end
+end)
+
+if CONFIG.PackAssetId == 0 and next(CONFIG.LetterAssetIds) == nil then
+	warn("[DZHUP] Letter asset IDs are not set. Fill PackAssetId or LetterAssetIds in CONFIG.")
+end
+
+-- Native Roblox notifications: Discord first, then WhatsApp
+local function askNotification(title, text, yesText, onYes)
+	local answered = false
+	local callback = Instance.new("BindableFunction")
+	callback.OnInvoke = function(choice)
+		answered = true
+		if choice == yesText then
+			onYes()
+		end
+	end
+	local ok = pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = title,
+			Text = text,
+			Duration = 15,
+			Button1 = yesText,
+			Button2 = "Not now",
+			Callback = callback,
+		})
+	end)
+	if not ok then
+		callback:Destroy()
+		return
+	end
+	local waited = 0
+	while not answered and waited < 16 do
+		task.wait(0.25)
+		waited += 0.25
+	end
+	callback:Destroy()
+end
+
+local function notifyCopied(text)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", { Title = CONFIG.Creator, Text = text, Duration = 5 })
+	end)
+end
+
+if CONFIG.PromptOnLaunch then
+	task.spawn(function()
+		task.wait(2)
+		if not save.settings.discordJoined then
+			askNotification(CONFIG.Creator .. "  |  " .. CONFIG.Community, "Do you want to join my Discord community?", "Join", function()
+				save.settings.discordJoined = true
+				persist()
+				if copyText(CONFIG.Discord) then
+					notifyCopied("Discord link copied. Paste it in your browser.")
+				else
+					notifyCopied(CONFIG.Discord)
+				end
+			end)
+		end
+		task.wait(1)
+		if not save.settings.whatsappJoined then
+			askNotification(CONFIG.Creator .. "  |  " .. CONFIG.Community, "Do you want to follow my WhatsApp channel?", "Follow", function()
+				save.settings.whatsappJoined = true
+				persist()
+				if copyText(CONFIG.WhatsApp) then
+					notifyCopied("WhatsApp link copied. Paste it in your browser.")
+				else
+					notifyCopied(CONFIG.WhatsApp)
+				end
+			end)
+		end
+	end)
+end
