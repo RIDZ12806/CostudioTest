@@ -34,13 +34,15 @@ local CONFIG = {
 	AvatarRobloxUserId = 0, -- optional: set the user id directly if the username lookup fails
 	AvatarImageUrl = "", -- or a direct image link (GitHub raw), e.g. https://raw.githubusercontent.com/.../me.png
 
-	-- >>> Letter models (use ONE of these two) <<<
-	-- Rockwell Letters pack: models named A..Z, a..z, 0..9 (upper and lower case are separate)
-	PackAssetId = 4506165589,
-	LetterAssetIds = {
-		-- or one id per letter, for example:
-		-- A = 1234567890,
-		-- B = 1234567891,
+	-- >>> Fonts <<<
+	-- Each font is one asset (a model holding the letters and numbers) or one id per letter.
+	-- Add more fonts to this list later. Optional per font:
+	--   frontNegZ = false  (set it if that font looks mirrored)
+	--   orient = Vector3.new(x, y, z)  (degrees, if the letters are rotated inside the model)
+	DefaultFont = "Rockwell",
+	Fonts = {
+		{ key = "Rockwell", title = "Rockwell", packId = 4506165589, letterIds = {} },
+		{ key = "GothamBlack", title = "Gotham Black", packId = 15715862597, letterIds = {} },
 	},
 
 	SaveFile = "DZHUP_NameMaker.json",
@@ -60,6 +62,15 @@ local CONFIG = {
 	-- from you (for example you opened another project), it is placed in front of you instead.
 	RestoreMaxDistance = 150,
 }
+
+local FONTS = CONFIG.Fonts
+local FONT_BY_KEY = {}
+for _, font in ipairs(FONTS) do
+	FONT_BY_KEY[font.key] = font
+end
+local function fontOf(key)
+	return FONT_BY_KEY[key] or FONT_BY_KEY[CONFIG.DefaultFont] or FONTS[1]
+end
 
 ---------------------------------------------------------------------
 -- Cleanup of an older run
@@ -313,7 +324,7 @@ pcall(function()
 	end
 end)
 
-local PANEL_W, PANEL_H = 620, 460
+local PANEL_W, PANEL_H = 620, 510
 local MIN_SCALE = 0.4
 
 local gui = new("ScreenGui", {
@@ -553,7 +564,7 @@ new("UIGradient", { Color = ColorSequence.new(THEME.accentSoft, THEME.accent), R
 
 local content = new("Frame", {
 	Position = UDim2.fromOffset(16, CONTENT_Y),
-	Size = UDim2.fromOffset(588, 300),
+	Size = UDim2.fromOffset(588, 356),
 	BackgroundTransparency = 1,
 }, panel)
 local createPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, content)
@@ -651,7 +662,7 @@ end
 -- Create page: settings card
 ---------------------------------------------------------------------
 local form = new("Frame", {
-	Size = UDim2.fromOffset(350, 300),
+	Size = UDim2.fromOffset(350, 356),
 	BackgroundColor3 = THEME.surface,
 	BorderSizePixel = 0,
 }, createPage)
@@ -726,9 +737,26 @@ new("UIGridLayout", {
 	SortOrder = Enum.SortOrder.LayoutOrder,
 }, styleRow)
 
+sectionTitle(form, "FONT", 240)
+local fontRow = new("ScrollingFrame", {
+	Position = UDim2.fromOffset(16, 260),
+	Size = UDim2.fromOffset(318, 30),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 0,
+	CanvasSize = UDim2.new(),
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+}, form)
+new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	Padding = UDim.new(0, 7),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, fontRow)
+
 local createButton = makeButton(form, {
 	Text = "CREATE 3D NAME",
-	Position = UDim2.fromOffset(16, 242),
+	Position = UDim2.fromOffset(16, 302),
 	Size = UDim2.fromOffset(318, 46),
 	TextSize = 14,
 	Font = Enum.Font.GothamBlack,
@@ -740,7 +768,7 @@ local createButton = makeButton(form, {
 ---------------------------------------------------------------------
 local previewCard = new("Frame", {
 	Position = UDim2.fromOffset(362, 0),
-	Size = UDim2.fromOffset(226, 300),
+	Size = UDim2.fromOffset(226, 356),
 	BackgroundColor3 = THEME.surface,
 	BorderSizePixel = 0,
 }, createPage)
@@ -817,6 +845,11 @@ local infoColor = textLabel(previewCard, "", {
 	Size = UDim2.new(1, -28, 0, 18),
 	TextSize = 12,
 })
+local infoFont = textLabel(previewCard, "", {
+	Position = UDim2.fromOffset(14, 286),
+	Size = UDim2.new(1, -28, 0, 18),
+	TextSize = 12,
+})
 local infoDot = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0),
 	Position = UDim2.new(1, -14, 0, 265),
@@ -832,6 +865,7 @@ stroke(infoDot, THEME.text, 0.6, 1)
 ---------------------------------------------------------------------
 local selectedColorIndex = 1
 local selectedStyle = "Plastic"
+local selectedFont = fontOf(CONFIG.DefaultFont)
 local swatches = {}
 
 local function selectedColor()
@@ -868,6 +902,7 @@ local function updatePreview()
 
 	infoStyle.Text = "Material: " .. (STYLE_TITLES[selectedStyle] or selectedStyle)
 	infoColor.Text = "Color: " .. PALETTE[selectedColorIndex][1]
+	infoFont.Text = "Font: " .. selectedFont.title
 	infoDot.BackgroundColor3 = color
 end
 
@@ -943,6 +978,49 @@ for index, item in ipairs(STYLES) do
 	end)
 end
 
+local fontChips = {}
+local function setFont(key)
+	selectedFont = fontOf(key)
+	for _, chip in ipairs(fontChips) do
+		local active = chip.key == selectedFont.key
+		tween(chip.button, 0.14, { BackgroundColor3 = active and THEME.accent or THEME.surface2 })
+		chip.button.TextColor3 = active and THEME.dark or THEME.text
+		chip.stroke.Transparency = active and 1 or 0.4
+	end
+	updatePreview()
+end
+
+for index, item in ipairs(FONTS) do
+	local button = new("TextButton", {
+		Text = item.title,
+		Size = UDim2.fromOffset(102, 30),
+		TextSize = 11,
+		Font = Enum.Font.GothamBold,
+		TextColor3 = THEME.text,
+		BackgroundColor3 = THEME.surface2,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+		LayoutOrder = index,
+	}, fontRow)
+	corner(button, 8)
+	local chip = { key = item.key, button = button, stroke = stroke(button, THEME.line, 0.4, 1) }
+	table.insert(fontChips, chip)
+	button.MouseEnter:Connect(function()
+		if selectedFont.key ~= chip.key then
+			tween(button, 0.1, { BackgroundColor3 = THEME.line })
+		end
+	end)
+	button.MouseLeave:Connect(function()
+		if selectedFont.key ~= chip.key then
+			tween(button, 0.1, { BackgroundColor3 = THEME.surface2 })
+		end
+	end)
+	button.Activated:Connect(function()
+		setFont(item.key)
+	end)
+end
+setFont(selectedFont.key)
+
 nameBox:GetPropertyChangedSignal("Text"):Connect(function()
 	local text = nameBox.Text
 	local length = utf8.len(text)
@@ -961,8 +1039,7 @@ end)
 -- 3D engine (letters loaded from asset IDs)
 ---------------------------------------------------------------------
 local templates = {}
-local packIndex = nil
-local packFailed = false
+local packs = {} -- per font: { index = table or nil, failed = bool }
 
 -- Removes invisible helper parts (they would break size and color of the letter)
 local function stripInvisible(model)
@@ -1011,25 +1088,53 @@ local function toModel(source)
 	return nil
 end
 
-local function getPackIndex()
-	if packIndex then
-		return packIndex
+local NUMBER_WORDS = {
+	zero = "0", one = "1", two = "2", three = "3", four = "4",
+	five = "5", six = "6", seven = "7", eight = "8", nine = "9",
+}
+
+-- "Meshes/C" -> "C", "Meshes/Five" -> "5", "A" -> "A", anything else -> nil
+local function keyFromName(name)
+	local tail = string.match(name, "([^/\\]+)$") or name
+	tail = trim(tail)
+	if #tail == 1 then
+		return tail
 	end
-	if packFailed or CONFIG.PackAssetId == 0 then
+	local lower = string.lower(tail)
+	if NUMBER_WORDS[lower] then
+		return NUMBER_WORDS[lower]
+	end
+	local digit = string.match(lower, "^number(%d)$") or string.match(lower, "^num(%d)$")
+	return digit
+end
+
+local function getPackIndex(font)
+	local state = packs[font.key]
+	if not state then
+		state = {}
+		packs[font.key] = state
+	end
+	if state.index then
+		return state.index
+	end
+	if state.failed or not font.packId or font.packId == 0 then
 		return nil
 	end
-	local root = loadObject(CONFIG.PackAssetId)
+	local root = loadObject(font.packId)
 	if not root then
-		packFailed = true
+		state.failed = true
 		return nil
 	end
-	-- Case-sensitive index: "a" and "A" are two different models in the pack
+	-- Case-sensitive index: "a" and "A" are two different models in a pack
 	local index = {}
+	local function accept(child)
+		return child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder")
+	end
 	local function scan(container)
 		for _, child in ipairs(container:GetChildren()) do
-			local key = child.Name
-			if #key == 1 and (child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder")) then
-				if not index[key] then
+			if accept(child) then
+				local key = keyFromName(child.Name)
+				if key and not index[key] then
 					index[key] = child
 				end
 			end
@@ -1038,19 +1143,19 @@ local function getPackIndex()
 	scan(root)
 	if next(index) == nil then
 		for _, item in ipairs(root:GetDescendants()) do
-			if (item:IsA("Folder") or item:IsA("Model")) and #item:GetChildren() > 3 then
-				scan(item)
-				if next(index) ~= nil then
-					break
+			if accept(item) then
+				local key = keyFromName(item.Name)
+				if key and not index[key] then
+					index[key] = item
 				end
 			end
 		end
 	end
 	if next(index) == nil then
-		packFailed = true
+		state.failed = true
 		return nil
 	end
-	packIndex = index
+	state.index = index
 	return index
 end
 
@@ -1062,40 +1167,47 @@ local function oppositeCase(character)
 	return string.lower(character)
 end
 
-local function getTemplate(character)
-	local cached = templates[character]
+local function getTemplate(font, character)
+	local cacheKey = font.key .. "|" .. character
+	local cached = templates[cacheKey]
 	if cached then
 		return cached
 	end
 
 	local source = nil
-	local index = getPackIndex()
+	local index = getPackIndex(font)
 	if index then
 		-- exact character first (a vs A), then the other case as a fallback
 		source = index[character] or index[oppositeCase(character)]
 	end
+	local ids = font.letterIds or {}
 	if not source then
-		local id = CONFIG.LetterAssetIds[character]
-			or CONFIG.LetterAssetIds[string.upper(character)]
-			or CONFIG.LetterAssetIds[string.lower(character)]
+		local id = ids[character] or ids[string.upper(character)] or ids[string.lower(character)]
 		if id then
 			source = loadObject(id)
 		end
 	end
 	if not source then
-		if CONFIG.PackAssetId == 0 and next(CONFIG.LetterAssetIds) == nil then
-			return nil, "Letter asset IDs are not set. Fill PackAssetId or LetterAssetIds in CONFIG."
+		if (not font.packId or font.packId == 0) and next(ids) == nil then
+			return nil, 'Font "' .. font.title .. '" has no asset id. Set packId in CONFIG.Fonts.'
 		end
-		return nil, 'Letter "' .. character .. '" is not available'
+		return nil, 'Letter "' .. character .. '" is not available in ' .. font.title
 	end
 
 	local model = toModel(source)
 	if not model then
 		return nil, 'Could not read the model for "' .. character .. '"'
 	end
+	model.Name = character
 
 	local pivot = model:GetPivot()
 	model:PivotTo(CFrame.new(pivot.Position))
+	if font.orient then
+		model:PivotTo(
+			CFrame.new(model:GetPivot().Position)
+				* CFrame.Angles(math.rad(font.orient.X), math.rad(font.orient.Y), math.rad(font.orient.Z))
+		)
+	end
 
 	local ok, boxCFrame, size = pcall(function()
 		return model:GetBoundingBox()
@@ -1106,7 +1218,7 @@ local function getTemplate(character)
 	end
 
 	local template = { model = model, center = boxCFrame.Position, width = size.X, height = size.Y }
-	templates[character] = template
+	templates[cacheKey] = template
 	return template
 end
 
@@ -1219,9 +1331,6 @@ local function getPlacement(skipEntry)
 
 	local toward = -forward
 	local rotation = CFrame.lookAt(Vector3.zero, toward).Rotation
-	if not CONFIG.FrontFaceIsNegativeZ then
-		rotation = rotation * CFrame.Angles(0, math.pi, 0)
-	end
 	local right = forward:Cross(Vector3.yAxis)
 	return center, rotation, right.Unit
 end
@@ -1238,11 +1347,19 @@ local function modelNameOf(entry)
 end
 
 local function buildName(entry)
+	local font = fontOf(entry.font)
 	local style = STYLE_DEFS[entry.style] or STYLE_DEFS.Plastic
 	local color = Color3.fromRGB(entry.color[1], entry.color[2], entry.color[3])
 	local center = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
 	local rotation = CFrame.new(0, 0, 0, table.unpack(entry.rot))
 	local right = Vector3.new(entry.right[1], entry.right[2], entry.right[3])
+	local frontNegZ = font.frontNegZ
+	if frontNegZ == nil then
+		frontNegZ = CONFIG.FrontFaceIsNegativeZ
+	end
+	if not frontNegZ then
+		rotation = rotation * CFrame.Angles(0, math.pi, 0)
+	end
 
 	local pieces = {}
 	local letterCount, widthSum = 0, 0
@@ -1251,7 +1368,7 @@ local function buildName(entry)
 		if string.match(character, "^%s$") then
 			table.insert(pieces, { space = true })
 		else
-			local template, templateError = getTemplate(character)
+			local template, templateError = getTemplate(font, character)
 			if not template then
 				return nil, templateError
 			end
@@ -1442,7 +1559,7 @@ function renderList()
 			TextSize = 17,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		})
-		textLabel(row, (STYLE_TITLES[entry.style] or "Plastic") .. " material", {
+		textLabel(row, fontOf(entry.font).title .. "  |  " .. (STYLE_TITLES[entry.style] or "Plastic") .. " material", {
 			Position = UDim2.fromOffset(60, 35),
 			Size = UDim2.new(1, -230, 0, 16),
 			TextSize = 11,
@@ -2008,6 +2125,7 @@ local function submit()
 		order = order + 1,
 		name = name,
 		style = selectedStyle,
+		font = selectedFont.key,
 		color = {
 			math.floor(color.R * 255 + 0.5),
 			math.floor(color.G * 255 + 0.5),
@@ -2110,8 +2228,10 @@ task.spawn(function()
 	end
 end)
 
-if CONFIG.PackAssetId == 0 and next(CONFIG.LetterAssetIds) == nil then
-	warn("[DZHUP] Letter asset IDs are not set. Fill PackAssetId or LetterAssetIds in CONFIG.")
+for _, font in ipairs(FONTS) do
+	if (not font.packId or font.packId == 0) and next(font.letterIds or {}) == nil then
+		warn("[DZHUP] Font " .. font.title .. " has no asset id. Set packId in CONFIG.Fonts.")
+	end
 end
 
 -- Native Roblox notifications: Discord first, then WhatsApp
