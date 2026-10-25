@@ -2,6 +2,10 @@
 DZ HUP  |  3D Name Maker  (Executor Edition)
 Made by RiyadoDzz
 
+v5: names are held in place WITHOUT any script (anchored + body movers),
+colors are baked into the letters, saved names in the project are adopted (never deleted),
+and the effects installer tries every method and reports why it failed.
+
 v4: FULLY AUTOMATIC.
 - The effects script (DZHUP_Effects) is installed / updated in ServerScriptService by this
   tool itself (it tries several methods). No manual paste is needed.
@@ -108,6 +112,7 @@ if genv.DZHUP_NameMakerCleanup then
 	pcall(genv.DZHUP_NameMakerCleanup)
 end
 local conns = {}
+local H = {} -- helper functions (kept in one table to save local variable slots)
 local function on(signal, fn)
 	local c = signal:Connect(fn)
 	table.insert(conns, c)
@@ -330,13 +335,12 @@ end
 ---------------------------------------------------------------------
 -- Roots
 ---------------------------------------------------------------------
-local oldFolder = Workspace:FindFirstChild("DZHUP_Names")
-if oldFolder then
-	oldFolder:Destroy()
+local namesFolder = Workspace:FindFirstChild("DZHUP_Names")
+if not namesFolder then
+	namesFolder = Instance.new("Folder")
+	namesFolder.Name = "DZHUP_Names"
+	namesFolder.Parent = Workspace
 end
-local namesFolder = Instance.new("Folder")
-namesFolder.Name = "DZHUP_Names"
-namesFolder.Parent = Workspace
 
 local guiParent
 do
@@ -1421,6 +1425,20 @@ textLabel(studioCard, "These options apply to the next name you create.", {
 	TextColor3 = THEME.muted,
 })
 
+local installButton = makeButton(studioCard, {
+	Text = "Install effects script",
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -16, 0, 322),
+	Size = UDim2.fromOffset(170, 26),
+	TextSize = 11,
+	TextColor3 = THEME.accent,
+}, { fill = THEME.surface2, stroke = THEME.accent, strokeTransparency = 0.6, radius = 8 })
+installButton.Activated:Connect(function()
+	if H.onInstall then
+		H.onInstall()
+	end
+end)
+
 refreshStudio = function()
 	for _, group in ipairs(studioGroups) do
 		group.refresh()
@@ -1736,16 +1754,99 @@ local function modelNameOf(entry)
 end
 
 ---------------------------------------------------------------------
--- Effects script (installed AUTOMATICALLY into ServerScriptService)
+-- Holding names in place: works with NO script at all
 ---------------------------------------------------------------------
-local EFFECT_VERSION = 4
+-- Layer 1: Anchored. Layer 2: BodyPosition + BodyGyro saved inside every part, so even if
+-- the anchoring were lost after saving, the letters still stay exactly where they are.
+function H.hold(model)
+	for _, item in ipairs(model:GetDescendants()) do
+		if item:IsA("BasePart") then
+			pcall(function()
+				item.Anchored = true
+				item.CanCollide = false
+				item.CanTouch = false
+				if not item:FindFirstChild("DZ_HoldPos") then
+					local bp = Instance.new("BodyPosition")
+					bp.Name = "DZ_HoldPos"
+					bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+					bp.P = 100000
+					bp.D = 2000
+					bp.Position = item.Position
+					bp.Parent = item
+					local bg = Instance.new("BodyGyro")
+					bg.Name = "DZ_HoldRot"
+					bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+					bg.P = 100000
+					bg.D = 2000
+					bg.CFrame = item.CFrame
+					bg.Parent = item
+				end
+			end)
+		end
+	end
+end
+
+-- A name that already exists in the project (saved earlier) is adopted as it is:
+-- it is never deleted or rebuilt, so every manual change you made to it is kept.
+function H.adopt(group)
+	if group:GetAttribute("DZ_FX") ~= true then
+		return
+	end
+	local c1 = group:GetAttribute("DZ_C1")
+	local c2 = group:GetAttribute("DZ_C2")
+	if typeof(c1) ~= "Color3" then
+		return
+	end
+	local info = {
+		c1 = c1,
+		c2 = typeof(c2) == "Color3" and c2 or nil,
+		rainbow = group:GetAttribute("DZ_Rainbow") == true,
+		float = group:GetAttribute("DZ_Float") == true,
+		base = group:GetPivot(),
+		amp = group:GetAttribute("DZ_Amp") or 0.35,
+		phase = group:GetAttribute("DZ_Phase") or 0,
+	}
+	pcall(function()
+		group:SetAttribute("DZ_Base", info.base)
+	end)
+	if group:GetAttribute("DZ_Colors") == true and (info.c2 or info.rainbow) then
+		info.letters = {}
+		for _, letter in ipairs(group:GetChildren()) do
+			local t = letter:GetAttribute("DZ_T")
+			if type(t) == "number" then
+				local parts = {}
+				if letter:IsA("BasePart") then
+					table.insert(parts, letter)
+				end
+				for _, item in ipairs(letter:GetDescendants()) do
+					if item:IsA("BasePart") then
+						table.insert(parts, item)
+					end
+				end
+				table.insert(info.letters, {
+					t = t,
+					parts = parts,
+					light = letter:FindFirstChildWhichIsA("PointLight", true),
+				})
+			end
+		end
+	end
+	animated[group] = info
+end
+
+---------------------------------------------------------------------
+-- Effects script installer (tries every known method, reports why it fails)
+---------------------------------------------------------------------
+do -- BLOCK effectsInstaller
+local EFFECT_VERSION = 5
+local EFFECT_MARK = "DZ HUP | Name Effects"
 
 local EFFECT_SOURCE = [==[
 --[[
 DZ HUP | Name Effects
 Installed automatically by the DZ HUP Name Maker.
-Reads the effect data saved inside every name (Workspace > DZHUP_Names), keeps every
-letter anchored (so names never fall) and plays dual color flow, rainbow, float and glow.
+Keeps every letter anchored (names never fall) and plays dual color flow, rainbow, float
+and glow from the data saved inside each name (Workspace > DZHUP_Names).
 ]]
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -1811,11 +1912,11 @@ local function collect(model)
 end
 
 local function track(model)
-	if tracked[model] or not model:IsA("Model") then
+	if not model:IsA("Model") then
 		return
 	end
 	pcall(anchorAll, model)
-	if model:GetAttribute("DZ_FX") == true then
+	if not tracked[model] and model:GetAttribute("DZ_FX") == true then
 		local ok, info = pcall(collect, model)
 		if ok then
 			tracked[model] = info
@@ -1830,6 +1931,14 @@ local function watch(folder)
 	folder.ChildAdded:Connect(function(model)
 		task.wait(0.2)
 		track(model)
+	end)
+	task.spawn(function()
+		while folder.Parent do
+			for _, model in ipairs(folder:GetChildren()) do
+				pcall(track, model)
+			end
+			task.wait(2)
+		end
 	end)
 end
 
@@ -1881,17 +1990,34 @@ RunService.Heartbeat:Connect(function()
 end)
 ]==]
 
-local EFFECT_MARK = "DZ HUP | Name Effects"
-
-local function getEffectsScript()
-	local ok, found = pcall(function()
-		return game:GetService("ServerScriptService"):FindFirstChild("DZHUP_Effects")
-	end)
-	return ok and found or nil
+local log = {}
+local function note(text)
+	table.insert(log, text)
 end
 
-local function effectsNeedsInstall()
-	local existing = getEffectsScript()
+local function elevate(level)
+	local names_ = { "setthreadidentity", "set_thread_identity", "setidentity", "set_identity", "setthreadcontext", "set_thread_context" }
+	for _, key in ipairs(names_) do
+		local fn = genv[key] or _G[key]
+		if type(fn) == "function" and pcall(fn, level) then
+			return true
+		end
+	end
+	local syn = genv.syn
+	if type(syn) == "table" and type(syn.set_thread_identity) == "function" and pcall(syn.set_thread_identity, level) then
+		return true
+	end
+	return false
+end
+
+local function findExisting()
+	local sss = game:GetService("ServerScriptService")
+	local found = sss:FindFirstChild("DZHUP_Effects") or Workspace:FindFirstChild("DZHUP_Effects")
+	return found
+end
+
+local function needsInstall()
+	local existing = findExisting()
 	if not existing then
 		return true
 	end
@@ -1902,65 +2028,103 @@ local function effectsNeedsInstall()
 	return version < EFFECT_VERSION
 end
 
--- Tries every known way to write code into a Script. Returns true only if the code can be read back.
+-- returns true, "verified" | "unverified"  or  false
 local function writeSource(target)
 	local methods = {
-		function()
+		{ "direct", function()
 			target.Source = EFFECT_SOURCE
-		end,
-		function()
-			if type(setscriptable) == "function" then
-				setscriptable(target, "Source", true)
-				target.Source = EFFECT_SOURCE
+		end },
+		{ "setscriptable", function()
+			if type(setscriptable) ~= "function" then
+				error("setscriptable not available")
 			end
-		end,
-		function()
-			if type(sethiddenproperty) == "function" then
-				sethiddenproperty(target, "Source", EFFECT_SOURCE)
+			setscriptable(target, "Source", true)
+			target.Source = EFFECT_SOURCE
+		end },
+		{ "sethiddenproperty", function()
+			if type(sethiddenproperty) ~= "function" then
+				error("sethiddenproperty not available")
 			end
-		end,
-		function()
+			sethiddenproperty(target, "Source", EFFECT_SOURCE)
+		end },
+		{ "ScriptEditorService", function()
 			game:GetService("ScriptEditorService"):UpdateSourceAsync(target, function()
 				return EFFECT_SOURCE
 			end)
-		end,
+		end },
+		{ "ScriptDocument", function()
+			local service = game:GetService("ScriptEditorService")
+			local doc = service:FindScriptDocument(target)
+			if not doc then
+				service:OpenScriptDocumentAsync(target)
+				doc = service:FindScriptDocument(target)
+			end
+			if not doc then
+				error("no script document")
+			end
+			doc:EditTextAsync(EFFECT_SOURCE, 1, 1, 1, 1)
+		end },
 	}
-	for _, method in ipairs(methods) do
-		pcall(method)
-		local ok, back = pcall(function()
-			return target.Source
-		end)
-		if ok and type(back) == "string" and string.find(back, EFFECT_MARK, 1, true) then
-			return true
+	local unverified = false
+	for _, level in ipairs({ 8, 5, 4, 2 }) do
+		elevate(level)
+		for _, method in ipairs(methods) do
+			local ok, err = pcall(method[2])
+			if not ok then
+				note(string.format("[id %d] %s: %s", level, method[1], tostring(err)))
+			end
+			local readOk, back = pcall(function()
+				return target.Source
+			end)
+			if readOk and type(back) == "string" and string.find(back, EFFECT_MARK, 1, true) then
+				return true, "verified"
+			end
+			if ok and not (readOk and type(back) == "string" and #back > 0) then
+				unverified = true
+			end
 		end
+	end
+	if unverified then
+		return true, "unverified"
 	end
 	return false
 end
 
--- Installs or updates the effects script by itself. No paste needed.
-local function installEffects()
-	local sss = game:GetService("ServerScriptService")
-	local target = getEffectsScript()
+local function install()
+	log = {}
+	local target = findExisting()
 	local created = false
 	if not target then
-		local ok, made = pcall(function()
-			local s = Instance.new("Script")
-			s.Name = "DZHUP_Effects"
-			s.Parent = sss
-			return s
-		end)
-		if not ok or not made then
-			return false
+		for _, parent in ipairs({ game:GetService("ServerScriptService"), Workspace }) do
+			local ok, made = pcall(function()
+				local s = Instance.new("Script")
+				s.Name = "DZHUP_Effects"
+				s.Parent = parent
+				return s
+			end)
+			if ok and made and made.Parent == parent then
+				target = made
+				created = true
+				break
+			end
+			note("create in " .. parent.Name .. ": " .. tostring(made))
+			if ok and made then
+				pcall(function()
+					made:Destroy()
+				end)
+			end
 		end
-		target = made
-		created = true
 	end
-	if writeSource(target) then
+	if not target then
+		return false
+	end
+	local ok, how = writeSource(target)
+	if ok then
 		pcall(function()
 			target.Enabled = true
 			target:SetAttribute("DZ_Version", EFFECT_VERSION)
 		end)
-		return true
+		return true, how
 	end
 	if created then
 		pcall(function()
@@ -1970,26 +2134,42 @@ local function installEffects()
 	return false
 end
 
-local effectsFailedOnce = false
-local function ensureEffects(silent)
-	if not effectsNeedsInstall() then
-		return true
+local failedOnce = false
+function H.ensureEffects(silent, force)
+	if not force and not needsInstall() then
+		return true, "Effects script is already installed"
 	end
-	local ok = installEffects()
+	local ok, how = install()
 	if ok then
 		if not silent then
-			print("[DZHUP] Effects script installed automatically in ServerScriptService.")
+			print("[DZHUP] Effects script installed (" .. tostring(how) .. ") in " .. tostring(findExisting() and findExisting().Parent and findExisting().Parent.Name))
 		end
-		return true
+		if how == "unverified" then
+			return true, "Effects script written (could not read it back to verify)"
+		end
+		return true, "Effects script installed"
 	end
-	if not effectsFailedOnce then
-		effectsFailedOnce = true
-		warn("[DZHUP] This editor does not allow writing code into a Script. Names stay anchored and colored, but animation in Play mode needs the Effects script.")
-		-- last resort only: put the code in the clipboard so it is one paste away
-		copyText(EFFECT_SOURCE)
+	if not failedOnce or force then
+		failedOnce = true
+		warn("[DZHUP] This editor blocks writing code into a Script. Why:")
+		for _, line in ipairs(log) do
+			warn("[DZHUP]   " .. line)
+		end
+		warn("[DZHUP] Names are still held in place (anchored + body movers) and colors are saved in the letters. Only live animation in Play mode needs the script.")
+		if force then
+			copyText(EFFECT_SOURCE)
+		end
 	end
-	return false
+	return false, "Editor blocks scripts. Names stay in place; animation only runs from the executor."
 end
+
+function H.onInstall()
+	task.spawn(function()
+		local ok, message = H.ensureEffects(false, true)
+		showToast(message, ok)
+	end)
+end
+end -- BLOCK effectsInstaller
 
 local function buildName(entry)
 	local font = fontOf(entry.font)
@@ -2114,6 +2294,22 @@ local function buildName(entry)
 				pcall(function()
 					letter:SetAttribute("DZ_T", t)
 				end)
+				-- bake the color into the letter itself (saved with the project, no script needed)
+				local staticColor = nil
+				if fx.rainbow then
+					staticColor = Color3.fromHSV((t * 0.8) % 1, 0.8, 1)
+				elseif color2 then
+					local w = (math.sin(t * CONFIG.WaveSpread * math.pi * 2) + 1) / 2
+					staticColor = color:Lerp(color2, w)
+				end
+				if staticColor then
+					for _, part in ipairs(parts) do
+						part.Color = staticColor
+					end
+					if light then
+						light.Color = staticColor
+					end
+				end
 				table.insert(waveLetters, { parts = parts, t = t, light = light })
 			end
 			firstPart = firstPart or letter:FindFirstChildWhichIsA("BasePart", true)
@@ -2139,6 +2335,7 @@ local function buildName(entry)
 
 	group.PrimaryPart = firstPart
 	group.Parent = namesFolder
+	H.hold(group)
 	pcall(function()
 		local _, size = group:GetBoundingBox()
 		entry.h = size.Y
@@ -3101,7 +3298,7 @@ local function submit()
 		renderList()
 
 		-- automatic: make sure the effects script exists in the project (no manual step)
-		local effectsOk = ensureEffects(false)
+		local effectsOk = H.ensureEffects(false)
 		if saved then
 			if effectsOk then
 				showToast("Name created and saved", true)
@@ -3179,15 +3376,12 @@ genv.DZHUP_NameMakerCleanup = function()
 	pcall(function()
 		clickSound:Destroy()
 	end)
-	pcall(function()
-		namesFolder:Destroy()
-	end)
 end
 
 -- Install / update the effects script right away (automatic, even before any name exists)
 task.spawn(function()
 	task.wait(0.5)
-	ensureEffects(false)
+	H.ensureEffects(false)
 end)
 
 -- Restore saved names for this place
@@ -3206,18 +3400,25 @@ task.spawn(function()
 	local viewPosition = viewBasis()
 
 	for _, entry in ipairs(names) do
-		if type(entry.center) == "table" then
-			local saved = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
-			if flat(saved - viewPosition).Magnitude > CONFIG.RestoreMaxDistance or saved.Y > anchor.Y + 200 then
-				local center, rotation, right = getPlacement(entry)
-				moved += 1
-				storePlacement(entry, center, rotation, right)
+		local existing = namesFolder:FindFirstChild(modelNameOf(entry))
+		if existing then
+			-- already saved inside the project: keep it exactly as it is
+			H.hold(existing)
+			pcall(H.adopt, existing)
+		else
+			if type(entry.center) == "table" then
+				local saved = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
+				if flat(saved - viewPosition).Magnitude > CONFIG.RestoreMaxDistance or saved.Y > anchor.Y + 200 then
+					local center, rotation, right = getPlacement(entry)
+					moved += 1
+					storePlacement(entry, center, rotation, right)
+				end
 			end
-		end
-		local ok, group, err = pcall(buildName, entry)
-		if (not ok or not group) and not warned then
-			warned = true
-			warn("[DZHUP] Could not restore saved names: " .. tostring(ok and err or group))
+			local ok, group, err = pcall(buildName, entry)
+			if (not ok or not group) and not warned then
+				warned = true
+				warn("[DZHUP] Could not restore saved names: " .. tostring(ok and err or group))
+			end
 		end
 		task.wait()
 	end
