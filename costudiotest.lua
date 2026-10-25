@@ -55,7 +55,7 @@ local CONFIG = {
 	-- true = the readable face of each letter is -Z. Set false if names look mirrored.
 	FrontFaceIsNegativeZ = true,
 	-- Saved names come back where you saved them. If a saved name is farther than this
-	-- from you (for example you opened another project), it is placed in front of you instead.
+	-- from the spawn area (for example you opened another project), it is placed around the spawn instead.
 	RestoreMaxDistance = 150,
 }
 
@@ -1135,11 +1135,47 @@ local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
 end
 
+-- Where the map starts (SpawnLocation). Studio Lite opens you around here.
+local function findSpawnPosition()
+	local spawn = nil
+	pcall(function()
+		spawn = Workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+	end)
+	if spawn then
+		return spawn.Position
+	end
+	return Vector3.new(0, 0.5, 0)
+end
+
+-- A spot around the spawn area, turned toward your camera. "level" stacks names upward.
+local function areaPlacement(level)
+	local anchor = findSpawnPosition()
+	local viewer = anchor + Vector3.new(0, 0, 40)
+	local camera = Workspace.CurrentCamera
+	if camera then
+		viewer = camera.CFrame.Position
+	end
+
+	local center = anchor + Vector3.new(0, CONFIG.HeightOffset + (level or 0) * 5, 0)
+	local toward = flat(viewer - center)
+	if toward.Magnitude < 0.05 then
+		toward = Vector3.new(0, 0, 1)
+	end
+	toward = toward.Unit
+
+	local rotation = CFrame.lookAt(Vector3.zero, toward).Rotation
+	if not CONFIG.FrontFaceIsNegativeZ then
+		rotation = rotation * CFrame.Angles(0, math.pi, 0)
+	end
+	local right = (-toward):Cross(Vector3.yAxis)
+	return center, rotation, right.Unit
+end
+
 local function getPlacement()
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if not root then
-		return Vector3.new(0, 10, 0), CFrame.new(), Vector3.xAxis
+		return areaPlacement(0)
 	end
 
 	local forward = flat(root.CFrame.LookVector)
@@ -2012,29 +2048,17 @@ end
 -- Only the letters are rebuilt. The character is never touched.
 task.spawn(function()
 	local warned = false
+	task.wait(1) -- let the map finish loading so the spawn area is known
 
-	-- wait for your character so we know where you are
-	local waited = 0
-	while waited < 10 do
-		local character = player.Character
-		if character and character:FindFirstChild("HumanoidRootPart") then
-			break
-		end
-		task.wait(0.25)
-		waited += 0.25
-	end
-
-	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local anchor = findSpawnPosition()
 	local moved = 0
 
 	for _, entry in ipairs(names) do
-		-- a name saved far away (another project / map) is brought in front of you
-		if root and type(entry.center) == "table" then
+		-- a name saved far from the spawn area (another project / map) is brought back here
+		if type(entry.center) == "table" then
 			local saved = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
-			if (saved - root.Position).Magnitude > CONFIG.RestoreMaxDistance then
-				local center, rotation, right = getPlacement()
-				center += Vector3.yAxis * (moved * 4)
+			if (saved - anchor).Magnitude > CONFIG.RestoreMaxDistance then
+				local center, rotation, right = areaPlacement(moved)
 				moved += 1
 				storePlacement(entry, center, rotation, right)
 			end
