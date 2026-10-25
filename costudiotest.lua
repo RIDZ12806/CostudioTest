@@ -30,7 +30,8 @@ local CONFIG = {
 	WhatsApp = "https://whatsapp.com/channel/0029VbDuGkhGJP8DJbzVEG0K",
 
 	-- >>> Your picture (use ONE of these two) <<<
-	AvatarRobloxUserId = 0, -- your Roblox user id (shows your avatar headshot)
+	RobloxUsername = "RiyadoDzz", -- your avatar is loaded automatically from this username
+	AvatarRobloxUserId = 0, -- optional: set the user id directly if the username lookup fails
 	AvatarImageUrl = "", -- or a direct image link (GitHub raw), e.g. https://raw.githubusercontent.com/.../me.png
 
 	-- >>> Letter models (use ONE of these two) <<<
@@ -53,6 +54,9 @@ local CONFIG = {
 	HeightOffset = 2.8,
 	-- true = the readable face of each letter is -Z. Set false if names look mirrored.
 	FrontFaceIsNegativeZ = true,
+	-- Saved names come back where you saved them. If a saved name is farther than this
+	-- from you (for example you opened another project), it is placed in front of you instead.
+	RestoreMaxDistance = 150,
 }
 
 ---------------------------------------------------------------------
@@ -328,13 +332,16 @@ local backdrop = new("Frame", {
 }, gui)
 
 local openButton, openStroke = makeButton(gui, {
-	Text = "3D  NAMES",
+	Text = "RX",
 	AnchorPoint = Vector2.new(0, 0.5),
 	Position = UDim2.new(0, 12, 0.5, 0),
-	Size = UDim2.fromOffset(106, 38),
-	TextSize = 12,
-}, { fill = THEME.header, stroke = THEME.accent, strokeTransparency = 0.45, radius = 19 })
+	Size = UDim2.fromOffset(44, 44),
+	TextSize = 14,
+	Font = Enum.Font.GothamBlack,
+}, { fill = THEME.header, stroke = THEME.accent, strokeTransparency = 0.6, radius = 22 })
 openButton.TextColor3 = THEME.accent
+openButton.BackgroundTransparency = 0.5
+openButton.TextTransparency = 0.1
 local openButtonScale = new("UIScale", { Scale = 1 }, openButton)
 
 local holder = new("Frame", {
@@ -461,22 +468,13 @@ local logoHolder = new("Frame", {
 	Size = UDim2.fromOffset(70, 28),
 	BackgroundTransparency = 1,
 }, header)
-local logoGlow = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.new(1, 14, 1, 14),
-	BackgroundColor3 = THEME.accent,
-	BackgroundTransparency = 0.82,
-	BorderSizePixel = 0,
-}, logoHolder)
-corner(logoGlow, 20)
 local logoPill = new("Frame", {
 	Size = UDim2.fromScale(1, 1),
 	BackgroundColor3 = THEME.surface,
 	BorderSizePixel = 0,
 }, logoHolder)
 corner(logoPill, 14)
-local logoStroke = stroke(logoPill, THEME.accent, 0.1, 1.5)
+stroke(logoPill, THEME.accent, 0.1, 1.5)
 local logoText = textLabel(logoPill, "RXDZ", {
 	Size = UDim2.fromScale(1, 1),
 	Font = Enum.Font.GothamBlack,
@@ -492,8 +490,6 @@ local logoGradient = new("UIGradient", {
 	}),
 	Offset = Vector2.new(-1, 0),
 }, logoText)
-loop(logoGlow, 1.3, { BackgroundTransparency = 0.55, Size = UDim2.new(1, 22, 1, 22) })
-loop(logoStroke, 1.3, { Transparency = 0.7 })
 loop(logoGradient, 2, { Offset = Vector2.new(1, 0) }, Enum.EasingStyle.Linear, false)
 
 local closeButton = makeButton(header, {
@@ -1506,6 +1502,7 @@ local avatarImage = new("ImageLabel", {
 	Image = "",
 	Visible = false,
 }, avatarInner)
+corner(avatarImage, 100)
 
 textLabel(aboutLeft, CONFIG.Creator, {
 	Position = UDim2.fromOffset(0, 164),
@@ -1649,8 +1646,30 @@ task.spawn(function()
 			image = result
 		end
 	end
-	if not image and CONFIG.AvatarRobloxUserId > 0 then
-		image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", CONFIG.AvatarRobloxUserId)
+	if not image then
+		local userId = CONFIG.AvatarRobloxUserId
+		if (not userId or userId <= 0) and CONFIG.RobloxUsername and CONFIG.RobloxUsername ~= "" then
+			local ok, id = pcall(function()
+				return Players:GetUserIdFromNameAsync(CONFIG.RobloxUsername)
+			end)
+			if ok and type(id) == "number" then
+				userId = id
+			end
+		end
+		if userId and userId > 0 then
+			local ok, thumb, ready = pcall(function()
+				return Players:GetUserThumbnailAsync(
+					userId,
+					Enum.ThumbnailType.HeadShot,
+					Enum.ThumbnailSize.Size150x150
+				)
+			end)
+			if ok and thumb and thumb ~= "" and ready ~= false then
+				image = thumb
+			else
+				image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", userId)
+			end
+		end
 	end
 	if image then
 		avatarImage.Image = image
@@ -1990,15 +2009,45 @@ genv.DZHUP_NameMakerCleanup = function()
 end
 
 -- Restore saved names for this place
+-- Only the letters are rebuilt. The character is never touched.
 task.spawn(function()
 	local warned = false
+
+	-- wait for your character so we know where you are
+	local waited = 0
+	while waited < 10 do
+		local character = player.Character
+		if character and character:FindFirstChild("HumanoidRootPart") then
+			break
+		end
+		task.wait(0.25)
+		waited += 0.25
+	end
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local moved = 0
+
 	for _, entry in ipairs(names) do
+		-- a name saved far away (another project / map) is brought in front of you
+		if root and type(entry.center) == "table" then
+			local saved = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
+			if (saved - root.Position).Magnitude > CONFIG.RestoreMaxDistance then
+				local center, rotation, right = getPlacement()
+				center += Vector3.yAxis * (moved * 4)
+				moved += 1
+				storePlacement(entry, center, rotation, right)
+			end
+		end
 		local ok, group, err = pcall(buildName, entry)
 		if (not ok or not group) and not warned then
 			warned = true
 			warn("[DZHUP] Could not restore saved names: " .. tostring(ok and err or group))
 		end
 		task.wait()
+	end
+	if moved > 0 then
+		persist()
 	end
 end)
 
@@ -2016,17 +2065,26 @@ local function askNotification(title, text, yesText, onYes)
 			onYes()
 		end
 	end
-	local ok = pcall(function()
-		StarterGui:SetCore("SendNotification", {
-			Title = title,
-			Text = text,
-			Duration = 15,
-			Button1 = yesText,
-			Button2 = "Not now",
-			Callback = callback,
-		})
-	end)
-	if not ok then
+	-- the Roblox core UI can take a moment to accept notifications, so retry a few times
+	local sent = false
+	for _ = 1, 8 do
+		local ok = pcall(function()
+			StarterGui:SetCore("SendNotification", {
+				Title = title,
+				Text = text,
+				Duration = 15,
+				Button1 = yesText,
+				Button2 = "Not now",
+				Callback = callback,
+			})
+		end)
+		if ok then
+			sent = true
+			break
+		end
+		task.wait(1)
+	end
+	if not sent then
 		callback:Destroy()
 		return
 	end
@@ -2044,31 +2102,24 @@ local function notifyCopied(text)
 	end)
 end
 
+-- Shown on every launch: Discord first, then WhatsApp
 if CONFIG.PromptOnLaunch then
 	task.spawn(function()
-		task.wait(2)
-		if not save.settings.discordJoined then
-			askNotification(CONFIG.Creator .. "  |  " .. CONFIG.Community, "Do you want to join my Discord community?", "Join", function()
-				save.settings.discordJoined = true
-				persist()
-				if copyText(CONFIG.Discord) then
-					notifyCopied("Discord link copied. Paste it in your browser.")
-				else
-					notifyCopied(CONFIG.Discord)
-				end
-			end)
-		end
+		task.wait(3)
+		askNotification(CONFIG.Creator .. "  |  " .. CONFIG.Community, "Do you want to join my Discord community?", "Join", function()
+			if copyText(CONFIG.Discord) then
+				notifyCopied("Discord link copied. Paste it in your browser.")
+			else
+				notifyCopied(CONFIG.Discord)
+			end
+		end)
 		task.wait(1)
-		if not save.settings.whatsappJoined then
-			askNotification(CONFIG.Creator .. "  |  " .. CONFIG.Community, "Do you want to follow my WhatsApp channel?", "Follow", function()
-				save.settings.whatsappJoined = true
-				persist()
-				if copyText(CONFIG.WhatsApp) then
-					notifyCopied("WhatsApp link copied. Paste it in your browser.")
-				else
-					notifyCopied(CONFIG.WhatsApp)
-				end
-			end)
-		end
+		askNotification(CONFIG.Creator .. "  |  " .. CONFIG.Community, "Do you want to follow my WhatsApp channel?", "Follow", function()
+			if copyText(CONFIG.WhatsApp) then
+				notifyCopied("WhatsApp link copied. Paste it in your browser.")
+			else
+				notifyCopied(CONFIG.WhatsApp)
+			end
+		end)
 	end)
 end
