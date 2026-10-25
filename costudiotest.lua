@@ -5,14 +5,30 @@ Made by RiyadoDzz
 Single LocalScript-style file. No Studio setup needed:
 letters are loaded from Roblox asset IDs automatically.
 Names are saved to a file and restored on the next launch.
+
+FIX: the main chunk had more than 200 local variables at the same time
+(Luau limit: "Out of local registers ... exceeded limit 200").
+Nothing was removed or changed in behaviour. Self-contained sections are
+now wrapped in `do ... end` blocks so their locals are released.
+Also: no backslash is used anymore (Studio Lite deletes them on paste).
 ]]
 
-print("________________\u{2591}\u{2588}\u{2580}\u{2584}\u{2591}\u{2588}\u{2591}\u{2588}\u{2591}\u{2588}\u{2580}\u{2584}\u{2591}\u{2580}\u{2580}\u{2588}________________")
-print("________________\u{2591}\u{2588}\u{2580}\u{2584}\u{2591}\u{2584}\u{2580}\u{2584}\u{2591}\u{2588}\u{2591}\u{2588}\u{2591}\u{2584}\u{2580}\u{2591}________________")
-print("________________\u{2591}\u{2580}\u{2591}\u{2580}\u{2591}\u{2580}\u{2591}\u{2580}\u{2591}\u{2580}\u{2580}\u{2591}\u{2591}\u{2580}\u{2580}\u{2580}________________")
-print(" ")
-print("\u{25C6} RXDZ | NAME STUDIO")
-print("\u{25C6} Name Maker \u{2022} Symbols \u{2022} Emojis")
+do -- BLOCK banner
+	local function u(...)
+		local out = {}
+		for _, code in ipairs({ ... }) do
+			out[#out + 1] = utf8.char(code)
+		end
+		return table.concat(out)
+	end
+	local pad = string.rep("_", 16)
+	print(pad .. u(0x2591, 0x2588, 0x2580, 0x2584, 0x2591, 0x2588, 0x2591, 0x2588, 0x2591, 0x2588, 0x2580, 0x2584, 0x2591, 0x2580, 0x2580, 0x2588) .. pad)
+	print(pad .. u(0x2591, 0x2588, 0x2580, 0x2584, 0x2591, 0x2584, 0x2580, 0x2584, 0x2591, 0x2588, 0x2591, 0x2588, 0x2591, 0x2584, 0x2580, 0x2591) .. pad)
+	print(pad .. u(0x2591, 0x2580, 0x2591, 0x2580, 0x2591, 0x2580, 0x2591, 0x2580, 0x2591, 0x2580, 0x2580, 0x2591, 0x2591, 0x2580, 0x2580, 0x2580) .. pad)
+	print(" ")
+	print(u(0x25C6) .. " RXDZ | NAME STUDIO")
+	print(u(0x25C6) .. " Name Maker " .. u(0x2022) .. " Symbols " .. u(0x2022) .. " Emojis")
+end -- BLOCK banner
 
 if not game:IsLoaded() then
 	game.Loaded:Wait()
@@ -465,6 +481,7 @@ corner(panel, 16)
 local panelStroke = stroke(panel, THEME.line, 0.2, 1.2)
 local popScale = new("UIScale", { Scale = 0.9 }, panel)
 
+do -- BLOCK fillFrame
 local fillFrame = new("Frame", {
 	Size = UDim2.fromScale(1, 1),
 	BackgroundColor3 = Color3.new(1, 1, 1),
@@ -472,6 +489,7 @@ local fillFrame = new("Frame", {
 }, panel)
 corner(fillFrame, 16)
 new("UIGradient", { Color = ColorSequence.new(THEME.bgTop, THEME.bg), Rotation = 90 }, fillFrame)
+end -- BLOCK fillFrame
 
 ---------------------------------------------------------------------
 -- Position and size
@@ -530,6 +548,7 @@ new("Frame", {
 	BorderSizePixel = 0,
 }, header)
 
+do -- BLOCK badge
 local badge = new("Frame", {
 	Position = UDim2.fromOffset(16, 12),
 	Size = UDim2.fromOffset(32, 32),
@@ -545,6 +564,7 @@ textLabel(badge, "3D", {
 	TextColor3 = THEME.dark,
 	TextXAlignment = Enum.TextXAlignment.Center,
 })
+end -- BLOCK badge
 
 textLabel(header, "DZ HUP  Name Maker", {
 	Position = UDim2.fromOffset(58, 10),
@@ -559,6 +579,7 @@ textLabel(header, "Design your name in 3D letters", {
 	TextColor3 = THEME.muted,
 })
 
+do -- BLOCK logo
 -- Glowing RXDZ logo
 local logoHolder = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0.5),
@@ -589,6 +610,7 @@ local logoGradient = new("UIGradient", {
 	Offset = Vector2.new(-1, 0),
 }, logoText)
 loop(logoGradient, 2, { Offset = Vector2.new(1, 0) }, Enum.EasingStyle.Linear, false)
+end -- BLOCK logo
 
 local closeButton = makeButton(header, {
 	Text = "X",
@@ -1294,6 +1316,9 @@ end)
 ---------------------------------------------------------------------
 -- Studio page: pro options for the next name
 ---------------------------------------------------------------------
+local refreshStudio
+
+do -- BLOCK studio
 local studioCard = new("Frame", {
 	Size = UDim2.fromOffset(588, 356),
 	BackgroundColor3 = THEME.surface,
@@ -1303,7 +1328,6 @@ corner(studioCard, 12)
 stroke(studioCard, THEME.line, 0.5, 1)
 
 local studioGroups = {}
-local refreshStudio
 
 local function chipGroup(y, items, onPick)
 	local row = new("Frame", {
@@ -1421,6 +1445,7 @@ refreshStudio = function()
 		group.refresh()
 	end
 end
+end -- BLOCK studio
 
 ---------------------------------------------------------------------
 -- 3D engine (letters loaded from asset IDs)
@@ -1483,7 +1508,7 @@ local NUMBER_WORDS = {
 
 -- "Meshes/C" -> "C", "Meshes/Five" -> "5", "A" -> "A", anything else -> nil
 local function keyFromName(name)
-	local tail = string.match(name, "([^/\\]+)$") or name
+	local tail = string.match(name, "([^/" .. utf8.char(92) .. "]+)$") or name
 	tail = trim(tail)
 	if #tail == 1 then
 		return tail
@@ -1908,6 +1933,7 @@ end
 ---------------------------------------------------------------------
 -- Animations: flowing dual color, rainbow and floating names
 ---------------------------------------------------------------------
+do -- BLOCK heartbeat
 local lastWave = 0
 on(RunService.Heartbeat, function()
 	local now = os.clock()
@@ -1942,10 +1968,14 @@ on(RunService.Heartbeat, function()
 		end
 	end
 end)
+end -- BLOCK heartbeat
 
 ---------------------------------------------------------------------
 -- My Names page
 ---------------------------------------------------------------------
+local renderList
+
+do -- BLOCK mynames
 textLabel(listPage, "Saved names", {
 	Position = UDim2.fromOffset(4, 0),
 	Size = UDim2.new(1, -8, 0, 22),
@@ -1981,7 +2011,7 @@ new("UIPadding", {
 }, listFrame)
 new("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, listFrame)
 
-local emptyState = textLabel(listPage, "No saved names yet\nCreate your first one from the Create tab", {
+local emptyState = textLabel(listPage, "No saved names yet" .. utf8.char(10) .. "Create your first one from the Create tab", {
 	Position = UDim2.fromOffset(0, 28),
 	Size = UDim2.new(1, 0, 1, -28),
 	TextSize = 13,
@@ -1989,8 +2019,6 @@ local emptyState = textLabel(listPage, "No saved names yet\nCreate your first on
 	TextWrapped = true,
 	TextXAlignment = Enum.TextXAlignment.Center,
 })
-
-local renderList
 
 local function moveEntry(entry)
 	task.spawn(function()
@@ -2185,10 +2213,12 @@ clearButton.Activated:Connect(function()
 	renderList()
 	showToast("All names deleted", true)
 end)
+end -- BLOCK mynames
 
 ---------------------------------------------------------------------
 -- Creator page
 ---------------------------------------------------------------------
+do -- BLOCK creator
 local aboutLeft = new("Frame", {
 	Size = UDim2.fromOffset(240, 300),
 	BackgroundColor3 = THEME.surface,
@@ -2374,7 +2404,7 @@ end
 contactCard(44, "D", THEME.discord, "Discord", "Join the community server", CONFIG.Discord, "Discord link copied")
 contactCard(124, "W", THEME.whatsapp, "WhatsApp", "Follow the channel", CONFIG.WhatsApp, "WhatsApp link copied")
 
-textLabel(aboutRight, "Tap a card to copy its link,\nthen paste it in your browser.", {
+textLabel(aboutRight, "Tap a card to copy its link," .. utf8.char(10) .. "then paste it in your browser.", {
 	Position = UDim2.fromOffset(16, 214),
 	Size = UDim2.new(1, -32, 0, 36),
 	TextSize = 11,
@@ -2434,6 +2464,7 @@ task.spawn(function()
 		avatarLetter.Visible = false
 	end
 end)
+end -- BLOCK creator
 
 ---------------------------------------------------------------------
 -- Tab switching
@@ -2462,8 +2493,9 @@ for i, button in ipairs(tabButtons) do
 end
 
 ---------------------------------------------------------------------
--- Resize handle
+-- Resize handle + Drag and resize
 ---------------------------------------------------------------------
+do -- BLOCK dragresize
 local resizeHandle = new("TextButton", {
 	Name = "ResizeHandle",
 	AnchorPoint = Vector2.new(1, 1),
@@ -2503,9 +2535,6 @@ resizeHandle.MouseLeave:Connect(function()
 	tintGrip(THEME.muted)
 end)
 
----------------------------------------------------------------------
--- Drag and resize
----------------------------------------------------------------------
 local function isPointer(input)
 	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
 end
@@ -2562,10 +2591,12 @@ on(UserInputService.InputEnded, function(input)
 	end
 	dragging = false
 end)
+end -- BLOCK dragresize
 
 ---------------------------------------------------------------------
 -- Open / close animation
 ---------------------------------------------------------------------
+do -- BLOCK openclose
 local veil = new("Frame", {
 	Name = "Veil",
 	Size = UDim2.fromScale(1, 1),
@@ -2718,6 +2749,7 @@ on(UserInputService.InputBegan, function(input, processed)
 		setOpen(not isOpen)
 	end
 end)
+end -- BLOCK openclose
 
 ---------------------------------------------------------------------
 -- Create a name
