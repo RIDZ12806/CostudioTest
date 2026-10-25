@@ -7,8 +7,8 @@ letters are loaded from Roblox asset IDs automatically.
 Names are saved to a file and restored on the next launch.
 
 v3: effects (dual color flow, rainbow, float, glow) are now saved INSIDE each name
-(attributes on the model). The script installs a small LocalScript (DZHUP_Effects) in
-StarterPlayerScripts by itself, so the effects keep working after you save and reopen. Run this script once so old names
+(attributes on the model). Every animated name also gets its own Script (DZHUP_Effect) inside it,
+so the effects keep playing after you save the project and open it again. Run this script once so old names
 are rebuilt with the new data, then save the project.
 
 FIX: the main chunk had more than 200 local variables at the same time
@@ -57,6 +57,7 @@ local CONFIG = {
 	Community = "DZ HUP",
 	Discord = "https://discord.gg/Dj3CCnZAxJ",
 	WhatsApp = "https://whatsapp.com/channel/0029VbDuGkhGJP8DJbzVEG0K",
+	TikTok = "https://tiktok.com/@rx..dz",
 
 	-- >>> Your picture (use ONE of these two) <<<
 	RobloxUsername = "RiyadoDzz", -- your avatar is loaded automatically from this username
@@ -208,6 +209,7 @@ local THEME = {
 	success = Color3.fromRGB(96, 214, 150),
 	discord = Color3.fromRGB(88, 101, 242),
 	whatsapp = Color3.fromRGB(37, 211, 102),
+	tiktok = Color3.fromRGB(254, 44, 85),
 }
 
 local PALETTE = {
@@ -1770,6 +1772,93 @@ local function modelNameOf(entry)
 	return "DZHUP_" .. entry.id
 end
 
+-- Script that is created INSIDE every animated name and saved with the project.
+-- It reads the effect data stored on its own name (attributes) and plays the effects.
+local EFFECT_SOURCE = [==[
+-- DZ HUP | name effect (lives inside this name, saved with the project)
+local RunService = game:GetService("RunService")
+local model = script.Parent
+if not model or not model:IsA("Model") then
+	return
+end
+
+local c1 = model:GetAttribute("DZ_C1")
+local c2 = model:GetAttribute("DZ_C2")
+local useColors = model:GetAttribute("DZ_Colors") == true
+local rainbow = model:GetAttribute("DZ_Rainbow") == true
+local floating = model:GetAttribute("DZ_Float") == true
+local amp = model:GetAttribute("DZ_Amp") or 0.35
+local phase = model:GetAttribute("DZ_Phase") or 0
+local base = model:GetAttribute("DZ_Base")
+local speed = model:GetAttribute("DZ_Speed") or 0.35
+local spread = model:GetAttribute("DZ_Spread") or 1
+
+if typeof(c1) ~= "Color3" then
+	c1 = Color3.new(1, 1, 1)
+end
+if typeof(c2) ~= "Color3" then
+	c2 = nil
+end
+if typeof(base) ~= "CFrame" then
+	base = model:GetPivot()
+end
+
+local letters = {}
+if useColors then
+	for _, letter in ipairs(model:GetChildren()) do
+		local t = letter:GetAttribute("DZ_T")
+		if type(t) == "number" then
+			local parts = {}
+			if letter:IsA("BasePart") then
+				parts[#parts + 1] = letter
+			end
+			for _, item in ipairs(letter:GetDescendants()) do
+				if item:IsA("BasePart") then
+					parts[#parts + 1] = item
+				end
+			end
+			letters[#letters + 1] = {
+				t = t,
+				parts = parts,
+				light = letter:FindFirstChildWhichIsA("PointLight", true),
+			}
+		end
+	end
+end
+
+local last = 0
+RunService.Heartbeat:Connect(function()
+	local now = os.clock()
+	if now - last < 0.05 then
+		return
+	end
+	last = now
+
+	if useColors then
+		for _, letter in ipairs(letters) do
+			local blended = nil
+			if rainbow then
+				blended = Color3.fromHSV((letter.t * 0.8 - now * 0.12) % 1, 0.8, 1)
+			elseif c2 then
+				local wave = (math.sin((letter.t * spread - now * speed) * math.pi * 2) + 1) / 2
+				blended = c1:Lerp(c2, wave)
+			end
+			if blended then
+				for _, part in ipairs(letter.parts) do
+					part.Color = blended
+				end
+				if letter.light then
+					letter.light.Color = blended
+				end
+			end
+		end
+	end
+	if floating then
+		model:PivotTo(base + Vector3.new(0, math.sin(now * 1.4 + phase) * amp, 0))
+	end
+end)
+]==]
+
 local function buildName(entry)
 	local font = fontOf(entry.font)
 	local style = STYLE_DEFS[entry.style] or STYLE_DEFS.Plastic
@@ -1944,6 +2033,17 @@ local function buildName(entry)
 			group:SetAttribute("DZ_Speed", CONFIG.WaveSpeed)
 			group:SetAttribute("DZ_Spread", CONFIG.WaveSpread)
 		end)
+		-- the effect script itself, stored inside the name
+		local scriptOk, scriptError = pcall(function()
+			local fxScript = Instance.new("Script")
+			fxScript.Name = "DZHUP_Effect"
+			fxScript.Source = EFFECT_SOURCE
+			fxScript.Parent = group
+		end)
+		if not scriptOk and not genv.DZHUP_SourceWarned then
+			genv.DZHUP_SourceWarned = true
+			warn("[DZHUP] Could not put the effect script inside the name: " .. tostring(scriptError))
+		end
 		animated[group] = {
 			c1 = color,
 			c2 = color2,
@@ -2429,13 +2529,14 @@ local function contactCard(y, letter, color, title, sub, link, doneMessage)
 	end)
 end
 
-contactCard(44, "D", THEME.discord, "Discord", "Join the community server", CONFIG.Discord, "Discord link copied")
-contactCard(124, "W", THEME.whatsapp, "WhatsApp", "Follow the channel", CONFIG.WhatsApp, "WhatsApp link copied")
+contactCard(38, "D", THEME.discord, "Discord", "Join the community server", CONFIG.Discord, "Discord link copied")
+contactCard(108, "W", THEME.whatsapp, "WhatsApp", "Follow the channel", CONFIG.WhatsApp, "WhatsApp link copied")
+contactCard(178, "T", THEME.tiktok, "TikTok", "Follow my account", CONFIG.TikTok, "TikTok link copied")
 
-textLabel(aboutRight, "Tap a card to copy its link," .. utf8.char(10) .. "then paste it in your browser.", {
-	Position = UDim2.fromOffset(16, 214),
-	Size = UDim2.new(1, -32, 0, 36),
-	TextSize = 11,
+textLabel(aboutRight, "Tap a card to copy its link, then paste it in your browser.", {
+	Position = UDim2.fromOffset(16, 250),
+	Size = UDim2.new(1, -32, 0, 22),
+	TextSize = 10,
 	TextColor3 = THEME.muted,
 	TextWrapped = true,
 })
@@ -2962,166 +3063,6 @@ genv.DZHUP_NameMakerCleanup = function()
 	end)
 end
 
--- Effects script inside the project
--- The effects data is saved inside every name. This block also writes a small LocalScript
--- (DZHUP_Effects) into StarterPlayer > StarterPlayerScripts, so the effects keep playing
--- after you save the project, close it and open it again, even without running this script.
-do -- BLOCK installRuntime
-local RUNTIME_SOURCE = [==[
---[[
-DZ HUP | Name Effects Runtime
-Put this script ONCE in your project, as a LocalScript:
-  StarterPlayer > StarterPlayerScripts   (or ReplicatedFirst)
-
-It reads the effect data that the Name Maker saves inside every name
-(Workspace > DZHUP_Names > each name) and plays the effects again:
-dual color flow, rainbow, float up/down and glow color.
-Because the data lives inside the names, it stays after you save the
-project, close it and open it again.
-It never creates, deletes or edits anything except colors and position
-of the names that have effect data.
-]]
-
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-
-local FOLDER_NAME = "DZHUP_Names"
-local tracked = {} -- model -> info
-
-local function collect(model)
-	local info = {
-		c1 = model:GetAttribute("DZ_C1"),
-		c2 = model:GetAttribute("DZ_C2"),
-		colors = model:GetAttribute("DZ_Colors") == true,
-		rainbow = model:GetAttribute("DZ_Rainbow") == true,
-		float = model:GetAttribute("DZ_Float") == true,
-		amp = model:GetAttribute("DZ_Amp") or 0.35,
-		phase = model:GetAttribute("DZ_Phase") or 0,
-		base = model:GetAttribute("DZ_Base"),
-		speed = model:GetAttribute("DZ_Speed") or 0.35,
-		spread = model:GetAttribute("DZ_Spread") or 1,
-		letters = {},
-	}
-	if typeof(info.c1) ~= "Color3" then
-		info.c1 = Color3.new(1, 1, 1)
-	end
-	if typeof(info.c2) ~= "Color3" then
-		info.c2 = nil
-	end
-	if typeof(info.base) ~= "CFrame" then
-		info.base = model:GetPivot()
-	end
-	if info.colors then
-		for _, letter in ipairs(model:GetChildren()) do
-			local t = letter:GetAttribute("DZ_T")
-			if type(t) == "number" then
-				local parts = {}
-				if letter:IsA("BasePart") then
-					parts[#parts + 1] = letter
-				end
-				for _, item in ipairs(letter:GetDescendants()) do
-					if item:IsA("BasePart") then
-						parts[#parts + 1] = item
-					end
-				end
-				info.letters[#info.letters + 1] = {
-					t = t,
-					parts = parts,
-					light = letter:FindFirstChildWhichIsA("PointLight", true),
-				}
-			end
-		end
-	end
-	return info
-end
-
-local function register(model)
-	if tracked[model] then
-		return
-	end
-	if not model:IsA("Model") or model:GetAttribute("DZ_FX") ~= true then
-		return
-	end
-	tracked[model] = collect(model)
-end
-
--- look for names now and keep looking (names can be rebuilt or loaded later)
-task.spawn(function()
-	while true do
-		local folder = Workspace:FindFirstChild(FOLDER_NAME)
-		if folder then
-			for _, child in ipairs(folder:GetChildren()) do
-				pcall(register, child)
-			end
-		end
-		task.wait(1)
-	end
-end)
-
-local last = 0
-RunService.Heartbeat:Connect(function()
-	local now = os.clock()
-	if now - last < 0.033 then
-		return
-	end
-	last = now
-
-	for model, info in pairs(tracked) do
-		if not model.Parent then
-			tracked[model] = nil
-		else
-			if info.colors then
-				for _, letter in ipairs(info.letters) do
-					local blended = nil
-					if info.rainbow then
-						blended = Color3.fromHSV((letter.t * 0.8 - now * 0.12) % 1, 0.8, 1)
-					elseif info.c2 then
-						local wave = (math.sin((letter.t * info.spread - now * info.speed) * math.pi * 2) + 1) / 2
-						blended = info.c1:Lerp(info.c2, wave)
-					end
-					if blended then
-						for _, part in ipairs(letter.parts) do
-							part.Color = blended
-						end
-						if letter.light then
-							letter.light.Color = blended
-						end
-					end
-				end
-			end
-			if info.float then
-				model:PivotTo(info.base + Vector3.new(0, math.sin(now * 1.4 + info.phase) * info.amp, 0))
-			end
-		end
-	end
-end)
-
-]==]
-task.spawn(function()
-	task.wait(2)
-	local ok, err = pcall(function()
-		local starter = game:GetService("StarterPlayer")
-		local scripts = starter:FindFirstChild("StarterPlayerScripts") or starter:WaitForChild("StarterPlayerScripts", 5)
-		if not scripts then
-			error("StarterPlayerScripts not found")
-		end
-		local old = scripts:FindFirstChild("DZHUP_Effects")
-		if old then
-			old:Destroy()
-		end
-		local installed = Instance.new("LocalScript")
-		installed.Name = "DZHUP_Effects"
-		installed.Source = RUNTIME_SOURCE
-		installed.Parent = scripts
-	end)
-	if ok then
-		showToast("Effects saved inside the project", true)
-	else
-		warn("[DZHUP] Effects script could not be installed here: " .. tostring(err))
-	end
-end)
-end -- BLOCK installRuntime
-
 -- Restore saved names for this place
 -- Only the letters are rebuilt. The character is never touched.
 task.spawn(function()
@@ -3214,7 +3155,7 @@ local function notifyCopied(text)
 	end)
 end
 
--- Shown on every launch: Discord first, then WhatsApp
+-- Shown on every launch: Discord first, then WhatsApp, then TikTok
 if CONFIG.PromptOnLaunch then
 	task.spawn(function()
 		task.wait(3)
@@ -3231,6 +3172,14 @@ if CONFIG.PromptOnLaunch then
 				notifyCopied("WhatsApp link copied. Paste it in your browser.")
 			else
 				notifyCopied(CONFIG.WhatsApp)
+			end
+		end)
+		task.wait(1)
+		askNotification(CONFIG.Creator .. "  |  " .. CONFIG.Community, "Do you want to follow my TikTok account?", "Follow", function()
+			if copyText(CONFIG.TikTok) then
+				notifyCopied("TikTok link copied. Paste it in your browser.")
+			else
+				notifyCopied(CONFIG.TikTok)
 			end
 		end)
 	end)
