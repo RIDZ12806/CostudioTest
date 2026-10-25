@@ -7,12 +7,12 @@ letters are loaded from Roblox asset IDs automatically.
 Names are saved to a file and restored on the next launch.
 ]]
 
-print("________________░█▀▄░█░█░█▀▄░▀▀█________________")
-print("________________░█▀▄░▄▀▄░█░█░▄▀░________________")
-print("________________░▀░▀░▀░▀░▀▀░░▀▀▀________________")
+print("________________\u{2591}\u{2588}\u{2580}\u{2584}\u{2591}\u{2588}\u{2591}\u{2588}\u{2591}\u{2588}\u{2580}\u{2584}\u{2591}\u{2580}\u{2580}\u{2588}________________")
+print("________________\u{2591}\u{2588}\u{2580}\u{2584}\u{2591}\u{2584}\u{2580}\u{2584}\u{2591}\u{2588}\u{2591}\u{2588}\u{2591}\u{2584}\u{2580}\u{2591}________________")
+print("________________\u{2591}\u{2580}\u{2591}\u{2580}\u{2591}\u{2580}\u{2591}\u{2580}\u{2591}\u{2580}\u{2580}\u{2591}\u{2591}\u{2580}\u{2580}\u{2580}________________")
 print(" ")
-print("◆ RXDZ | NAME STUDIO")
-print("◆ Name Maker • Symbols • Emojis")
+print("\u{25C6} RXDZ | NAME STUDIO")
+print("\u{25C6} Name Maker \u{2022} Symbols \u{2022} Emojis")
 
 if not game:IsLoaded() then
 	game.Loaded:Wait()
