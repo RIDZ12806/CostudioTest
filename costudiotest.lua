@@ -6,6 +6,11 @@ Single LocalScript-style file. No Studio setup needed:
 letters are loaded from Roblox asset IDs automatically.
 Names are saved to a file and restored on the next launch.
 
+v3: effects (dual color flow, rainbow, float, glow) are now saved INSIDE each name
+(attributes on the model). The script installs a small LocalScript (DZHUP_Effects) in
+StarterPlayerScripts by itself, so the effects keep working after you save and reopen. Run this script once so old names
+are rebuilt with the new data, then save the project.
+
 FIX: the main chunk had more than 200 local variables at the same time
 (Luau limit: "Out of local registers ... exceeded limit 200").
 Nothing was removed or changed in behaviour. Self-contained sections are
@@ -1886,6 +1891,9 @@ local function buildName(entry)
 					end
 				end
 				local t = totalWidth > 0 and (xc + totalWidth / 2) / totalWidth or 0
+				pcall(function()
+					letter:SetAttribute("DZ_T", t)
+				end)
 				table.insert(waveLetters, { parts = parts, t = t, light = light })
 			end
 			firstPart = firstPart or letter:FindFirstChildWhichIsA("BasePart", true)
@@ -1916,15 +1924,35 @@ local function buildName(entry)
 		entry.h = size.Y
 	end)
 	if colorAnim or fx.float then
+		local fxBase = group:GetPivot()
+		local fxAmp = 0.35 * math.max(scale, 0.6)
+		local fxPhase = math.random() * math.pi * 2
+		-- Effect data is written on the model itself (attributes are saved with the project),
+		-- so the Effects script can bring the animation back after saving and reopening.
+		pcall(function()
+			group:SetAttribute("DZ_FX", true)
+			group:SetAttribute("DZ_C1", color)
+			if color2 then
+				group:SetAttribute("DZ_C2", color2)
+			end
+			group:SetAttribute("DZ_Colors", colorAnim)
+			group:SetAttribute("DZ_Rainbow", fx.rainbow == true)
+			group:SetAttribute("DZ_Float", fx.float == true)
+			group:SetAttribute("DZ_Amp", fxAmp)
+			group:SetAttribute("DZ_Phase", fxPhase)
+			group:SetAttribute("DZ_Base", fxBase)
+			group:SetAttribute("DZ_Speed", CONFIG.WaveSpeed)
+			group:SetAttribute("DZ_Spread", CONFIG.WaveSpread)
+		end)
 		animated[group] = {
 			c1 = color,
 			c2 = color2,
 			rainbow = fx.rainbow == true,
 			letters = colorAnim and waveLetters or nil,
 			float = fx.float == true,
-			base = group:GetPivot(),
-			amp = 0.35 * math.max(scale, 0.6),
-			phase = math.random() * math.pi * 2,
+			base = fxBase,
+			amp = fxAmp,
+			phase = fxPhase,
 		}
 	end
 	return group
@@ -2933,6 +2961,166 @@ genv.DZHUP_NameMakerCleanup = function()
 		namesFolder:Destroy()
 	end)
 end
+
+-- Effects script inside the project
+-- The effects data is saved inside every name. This block also writes a small LocalScript
+-- (DZHUP_Effects) into StarterPlayer > StarterPlayerScripts, so the effects keep playing
+-- after you save the project, close it and open it again, even without running this script.
+do -- BLOCK installRuntime
+local RUNTIME_SOURCE = [==[
+--[[
+DZ HUP | Name Effects Runtime
+Put this script ONCE in your project, as a LocalScript:
+  StarterPlayer > StarterPlayerScripts   (or ReplicatedFirst)
+
+It reads the effect data that the Name Maker saves inside every name
+(Workspace > DZHUP_Names > each name) and plays the effects again:
+dual color flow, rainbow, float up/down and glow color.
+Because the data lives inside the names, it stays after you save the
+project, close it and open it again.
+It never creates, deletes or edits anything except colors and position
+of the names that have effect data.
+]]
+
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local FOLDER_NAME = "DZHUP_Names"
+local tracked = {} -- model -> info
+
+local function collect(model)
+	local info = {
+		c1 = model:GetAttribute("DZ_C1"),
+		c2 = model:GetAttribute("DZ_C2"),
+		colors = model:GetAttribute("DZ_Colors") == true,
+		rainbow = model:GetAttribute("DZ_Rainbow") == true,
+		float = model:GetAttribute("DZ_Float") == true,
+		amp = model:GetAttribute("DZ_Amp") or 0.35,
+		phase = model:GetAttribute("DZ_Phase") or 0,
+		base = model:GetAttribute("DZ_Base"),
+		speed = model:GetAttribute("DZ_Speed") or 0.35,
+		spread = model:GetAttribute("DZ_Spread") or 1,
+		letters = {},
+	}
+	if typeof(info.c1) ~= "Color3" then
+		info.c1 = Color3.new(1, 1, 1)
+	end
+	if typeof(info.c2) ~= "Color3" then
+		info.c2 = nil
+	end
+	if typeof(info.base) ~= "CFrame" then
+		info.base = model:GetPivot()
+	end
+	if info.colors then
+		for _, letter in ipairs(model:GetChildren()) do
+			local t = letter:GetAttribute("DZ_T")
+			if type(t) == "number" then
+				local parts = {}
+				if letter:IsA("BasePart") then
+					parts[#parts + 1] = letter
+				end
+				for _, item in ipairs(letter:GetDescendants()) do
+					if item:IsA("BasePart") then
+						parts[#parts + 1] = item
+					end
+				end
+				info.letters[#info.letters + 1] = {
+					t = t,
+					parts = parts,
+					light = letter:FindFirstChildWhichIsA("PointLight", true),
+				}
+			end
+		end
+	end
+	return info
+end
+
+local function register(model)
+	if tracked[model] then
+		return
+	end
+	if not model:IsA("Model") or model:GetAttribute("DZ_FX") ~= true then
+		return
+	end
+	tracked[model] = collect(model)
+end
+
+-- look for names now and keep looking (names can be rebuilt or loaded later)
+task.spawn(function()
+	while true do
+		local folder = Workspace:FindFirstChild(FOLDER_NAME)
+		if folder then
+			for _, child in ipairs(folder:GetChildren()) do
+				pcall(register, child)
+			end
+		end
+		task.wait(1)
+	end
+end)
+
+local last = 0
+RunService.Heartbeat:Connect(function()
+	local now = os.clock()
+	if now - last < 0.033 then
+		return
+	end
+	last = now
+
+	for model, info in pairs(tracked) do
+		if not model.Parent then
+			tracked[model] = nil
+		else
+			if info.colors then
+				for _, letter in ipairs(info.letters) do
+					local blended = nil
+					if info.rainbow then
+						blended = Color3.fromHSV((letter.t * 0.8 - now * 0.12) % 1, 0.8, 1)
+					elseif info.c2 then
+						local wave = (math.sin((letter.t * info.spread - now * info.speed) * math.pi * 2) + 1) / 2
+						blended = info.c1:Lerp(info.c2, wave)
+					end
+					if blended then
+						for _, part in ipairs(letter.parts) do
+							part.Color = blended
+						end
+						if letter.light then
+							letter.light.Color = blended
+						end
+					end
+				end
+			end
+			if info.float then
+				model:PivotTo(info.base + Vector3.new(0, math.sin(now * 1.4 + info.phase) * info.amp, 0))
+			end
+		end
+	end
+end)
+
+]==]
+task.spawn(function()
+	task.wait(2)
+	local ok, err = pcall(function()
+		local starter = game:GetService("StarterPlayer")
+		local scripts = starter:FindFirstChild("StarterPlayerScripts") or starter:WaitForChild("StarterPlayerScripts", 5)
+		if not scripts then
+			error("StarterPlayerScripts not found")
+		end
+		local old = scripts:FindFirstChild("DZHUP_Effects")
+		if old then
+			old:Destroy()
+		end
+		local installed = Instance.new("LocalScript")
+		installed.Name = "DZHUP_Effects"
+		installed.Source = RUNTIME_SOURCE
+		installed.Parent = scripts
+	end)
+	if ok then
+		showToast("Effects saved inside the project", true)
+	else
+		warn("[DZHUP] Effects script could not be installed here: " .. tostring(err))
+	end
+end)
+end -- BLOCK installRuntime
 
 -- Restore saved names for this place
 -- Only the letters are rebuilt. The character is never touched.
