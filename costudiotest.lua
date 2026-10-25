@@ -7,6 +7,13 @@ letters are loaded from Roblox asset IDs automatically.
 Names are saved to a file and restored on the next launch.
 ]]
 
+print("________________░█▀▄░█░█░█▀▄░▀▀█________________")
+print("________________░█▀▄░▄▀▄░█░█░▄▀░________________")
+print("________________░▀░▀░▀░▀░▀▀░░▀▀▀________________")
+print(" ")
+print("◆ RXDZ | NAME STUDIO")
+print("◆ Name Maker • Symbols • Emojis")
+
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
@@ -52,9 +59,16 @@ local CONFIG = {
 	SaveFile = "DZHUP_NameMaker.json",
 	PromptOnLaunch = true, -- ask about Discord / WhatsApp when the system opens
 
-	-- sound played when any button is pressed
-	ClickSoundId = "rbxassetid://70968472837037",
-	ClickSoundVolume = 1,
+	-- sound played when any button is pressed: the first one that loads is used
+	-- (official Roblox client sounds first, then official library clicks)
+	ClickSoundIds = {
+		"rbxasset://sounds/button.wav",
+		"rbxasset://sounds/switch.wav",
+		"rbxasset://sounds/clickfast.wav",
+		"rbxassetid://421058925",
+		"rbxassetid://6895079853",
+	},
+	ClickSoundVolume = 0.8,
 
 	-- dual color: how fast the colors flow (cycles per second) and how many waves fit in one name
 	WaveSpeed = 0.35,
@@ -350,11 +364,46 @@ local gui = new("ScreenGui", {
 ---------------------------------------------------------------------
 -- Button click sound (every TextButton in the interface)
 ---------------------------------------------------------------------
+local SoundService = game:GetService("SoundService")
+local ContentProvider = game:GetService("ContentProvider")
+
+pcall(function()
+	for _, old in ipairs(SoundService:GetChildren()) do
+		if old.Name == "DZHUP_ClickSound" then
+			old:Destroy()
+		end
+	end
+end)
+
 local clickSound = new("Sound", {
-	Name = "ClickSound",
-	SoundId = CONFIG.ClickSoundId,
+	Name = "DZHUP_ClickSound",
+	SoundId = CONFIG.ClickSoundIds[1],
 	Volume = CONFIG.ClickSoundVolume,
-}, gui)
+}, SoundService)
+
+-- pick the first sound that really loads on this device
+task.spawn(function()
+	for _, id in ipairs(CONFIG.ClickSoundIds) do
+		local test = Instance.new("Sound")
+		test.SoundId = id
+		test.Volume = 0
+		test.Parent = SoundService
+		pcall(function()
+			ContentProvider:PreloadAsync({ test })
+		end)
+		local waited = 0
+		while not test.IsLoaded and waited < 2 do
+			task.wait(0.1)
+			waited += 0.1
+		end
+		local works = test.IsLoaded and test.TimeLength > 0
+		test:Destroy()
+		if works then
+			clickSound.SoundId = id
+			return
+		end
+	end
+end)
 
 local function playClick()
 	pcall(function()
@@ -2436,6 +2485,9 @@ genv.DZHUP_NameMakerCleanup = function()
 	end
 	pcall(function()
 		gui:Destroy()
+	end)
+	pcall(function()
+		clickSound:Destroy()
 	end)
 	pcall(function()
 		namesFolder:Destroy()
