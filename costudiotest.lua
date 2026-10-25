@@ -56,7 +56,7 @@ local CONFIG = {
 	FrontFaceIsNegativeZ = true,
 	-- Saved names come back where you saved them. If a saved name is farther than this
 	-- from the spawn area (for example you opened another project), it is placed around the spawn instead.
-	RestoreMaxDistance = 150,
+	RestoreMaxDistance = 40,
 }
 
 ---------------------------------------------------------------------
@@ -1147,8 +1147,24 @@ local function findSpawnPosition()
 	return Vector3.new(0, 0.5, 0)
 end
 
--- A spot around the spawn area, turned toward your camera. "level" stacks names upward.
-local function areaPlacement(level)
+-- Height for the next name: just above the names already standing around the spawn,
+-- so every name you make appears in the same area without overlapping the others.
+local function nextHeight(skipEntry)
+	local anchor = findSpawnPosition()
+	local y = anchor.Y + CONFIG.HeightOffset
+	for _, item in ipairs(names) do
+		if item ~= skipEntry and type(item.center) == "table" then
+			local c = Vector3.new(item.center[1], item.center[2], item.center[3])
+			if flat(c - anchor).Magnitude <= CONFIG.RestoreMaxDistance and c.Y < anchor.Y + 200 then
+				y = math.max(y, c.Y + (item.h or 6) + 1.5)
+			end
+		end
+	end
+	return y
+end
+
+-- Always the spawn area (the SpawnLocation position), turned toward your camera.
+local function areaPlacement(height)
 	local anchor = findSpawnPosition()
 	local viewer = anchor + Vector3.new(0, 0, 40)
 	local camera = Workspace.CurrentCamera
@@ -1156,7 +1172,7 @@ local function areaPlacement(level)
 		viewer = camera.CFrame.Position
 	end
 
-	local center = anchor + Vector3.new(0, CONFIG.HeightOffset + (level or 0) * 5, 0)
+	local center = Vector3.new(anchor.X, height or (anchor.Y + CONFIG.HeightOffset), anchor.Z)
 	local toward = flat(viewer - center)
 	if toward.Magnitude < 0.05 then
 		toward = Vector3.new(0, 0, 1)
@@ -1171,36 +1187,8 @@ local function areaPlacement(level)
 	return center, rotation, right.Unit
 end
 
-local function getPlacement()
-	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root then
-		return areaPlacement(0)
-	end
-
-	local forward = flat(root.CFrame.LookVector)
-	if forward.Magnitude < 0.05 then
-		forward = Vector3.new(0, 0, -1)
-	end
-	forward = forward.Unit
-
-	local center = root.Position + forward * CONFIG.PlaceDistance + Vector3.new(0, CONFIG.HeightOffset, 0)
-
-	local towardPlayer = flat(root.Position - center)
-	if towardPlayer.Magnitude < 0.05 then
-		towardPlayer = -forward
-	end
-
-	local rotation = CFrame.lookAt(Vector3.zero, towardPlayer.Unit).Rotation
-	if not CONFIG.FrontFaceIsNegativeZ then
-		rotation = rotation * CFrame.Angles(0, math.pi, 0)
-	end
-
-	local right = flat(root.CFrame.RightVector)
-	if right.Magnitude < 0.05 then
-		right = Vector3.xAxis
-	end
-	return center, rotation, right.Unit
+local function getPlacement(skipEntry)
+	return areaPlacement(nextHeight(skipEntry))
 end
 
 local function storePlacement(entry, center, rotation, right)
@@ -1285,6 +1273,10 @@ local function buildName(entry)
 
 	group.PrimaryPart = firstPart
 	group.Parent = namesFolder
+	pcall(function()
+		local _, size = group:GetBoundingBox()
+		entry.h = size.Y
+	end)
 	return group
 end
 
@@ -1343,7 +1335,7 @@ local function moveEntry(entry)
 		if old then
 			old:Destroy()
 		end
-		local center, rotation, right = getPlacement()
+		local center, rotation, right = getPlacement(entry)
 		storePlacement(entry, center, rotation, right)
 		local ok, group, err = pcall(buildName, entry)
 		persist()
@@ -2054,11 +2046,11 @@ task.spawn(function()
 	local moved = 0
 
 	for _, entry in ipairs(names) do
-		-- a name saved far from the spawn area (another project / map) is brought back here
+		-- a name saved away from the spawn area (another project, or up in the air) is brought back here
 		if type(entry.center) == "table" then
 			local saved = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
-			if (saved - anchor).Magnitude > CONFIG.RestoreMaxDistance then
-				local center, rotation, right = areaPlacement(moved)
+			if flat(saved - anchor).Magnitude > CONFIG.RestoreMaxDistance or saved.Y > anchor.Y + 200 then
+				local center, rotation, right = getPlacement(entry)
 				moved += 1
 				storePlacement(entry, center, rotation, right)
 			end
