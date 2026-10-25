@@ -2,21 +2,12 @@
 DZ HUP  |  3D Name Maker  (Executor Edition)
 Made by RiyadoDzz
 
-Single LocalScript-style file. No Studio setup needed:
-letters are loaded from Roblox asset IDs automatically.
-Names are saved to a file and restored on the next launch.
-
-v3: effects (dual color flow, rainbow, float, glow) are now saved INSIDE each name
-(attributes on the model). Effect data is saved inside every name. The effects code lives in ONE Script named
-DZHUP_Effects in ServerScriptService (installed automatically if the editor allows it,
-otherwise the code is copied to your clipboard when you make a name with effects). Run this script once so old names
-are rebuilt with the new data, then save the project.
-
-FIX: the main chunk had more than 200 local variables at the same time
-(Luau limit: "Out of local registers ... exceeded limit 200").
-Nothing was removed or changed in behaviour. Self-contained sections are
-now wrapped in `do ... end` blocks so their locals are released.
-Also: no backslash is used anymore (Studio Lite deletes them on paste).
+v4: FULLY AUTOMATIC.
+- The effects script (DZHUP_Effects) is installed / updated in ServerScriptService by this
+  tool itself (it tries several methods). No manual paste is needed.
+- The effects script also anchors every letter when the game starts, so names never fall.
+- Effect data is saved inside each name (attributes), so everything survives save / reopen.
+- No backslash is used anywhere (Studio Lite deletes them on paste).
 ]]
 
 do -- BLOCK banner
@@ -60,16 +51,10 @@ local CONFIG = {
 	WhatsApp = "https://whatsapp.com/channel/0029VbDuGkhGJP8DJbzVEG0K",
 	TikTok = "https://tiktok.com/@rx..dz",
 
-	-- >>> Your picture (use ONE of these two) <<<
-	RobloxUsername = "RiyadoDzz", -- your avatar is loaded automatically from this username
-	AvatarRobloxUserId = 0, -- optional: set the user id directly if the username lookup fails
-	AvatarImageUrl = "", -- or a direct image link (GitHub raw), e.g. https://raw.githubusercontent.com/.../me.png
+	RobloxUsername = "RiyadoDzz",
+	AvatarRobloxUserId = 0,
+	AvatarImageUrl = "",
 
-	-- >>> Fonts <<<
-	-- Each font is one asset (a model holding the letters and numbers) or one id per letter.
-	-- Add more fonts to this list later. Optional per font:
-	--   frontNegZ = false  (set it if that font looks mirrored)
-	--   orient = Vector3.new(x, y, z)  (degrees, if the letters are rotated inside the model)
 	DefaultFont = "Rockwell",
 	Fonts = {
 		{ key = "Rockwell", title = "Rockwell", packId = 4506165589, letterIds = {} },
@@ -78,10 +63,8 @@ local CONFIG = {
 	},
 
 	SaveFile = "DZHUP_NameMaker.json",
-	PromptOnLaunch = true, -- ask about Discord / WhatsApp when the system opens
+	PromptOnLaunch = true,
 
-	-- sound played when any button is pressed: the first one that loads is used
-	-- (official Roblox client sounds first, then official library clicks)
 	ClickSoundIds = {
 		"rbxasset://sounds/button.wav",
 		"rbxasset://sounds/switch.wav",
@@ -91,10 +74,8 @@ local CONFIG = {
 	},
 	ClickSoundVolume = 0.8,
 
-	-- press this key to open / close the window
 	ToggleKey = Enum.KeyCode.RightShift,
 
-	-- dual color: how fast the colors flow (cycles per second) and how many waves fit in one name
 	WaveSpeed = 0.35,
 	WaveSpread = 1,
 
@@ -102,14 +83,11 @@ local CONFIG = {
 	MaxNames = 40,
 	LetterGap = 0.16,
 	SpaceWidthRatio = 0.6,
-	PlaceDistance = 18, -- fallback distance in front of you
-	MaxPlaceDistance = 150, -- furthest point your view can hit when placing a name
-	StackRadius = 25, -- names closer than this are stacked above each other
+	PlaceDistance = 18,
+	MaxPlaceDistance = 150,
+	StackRadius = 25,
 	HeightOffset = 2.8,
-	-- true = the readable face of each letter is -Z. Set false if names look mirrored.
 	FrontFaceIsNegativeZ = true,
-	-- Saved names come back where you saved them. If a saved name is farther than this
-	-- from you (for example you opened another project), it is placed in front of you instead.
 	RestoreMaxDistance = 150,
 }
 
@@ -406,7 +384,6 @@ local clickSound = new("Sound", {
 	Volume = CONFIG.ClickSoundVolume,
 }, SoundService)
 
--- pick the first sound that really loads on this device
 task.spawn(function()
 	for _, id in ipairs(CONFIG.ClickSoundIds) do
 		local test = Instance.new("Sound")
@@ -475,7 +452,6 @@ local holder = new("Frame", {
 }, gui)
 local scaler = new("UIScale", { Scale = 1 }, holder)
 
--- Plain Frame (no CanvasGroup) so text stays sharp at any size
 local panel = new("Frame", {
 	Name = "Panel",
 	AnchorPoint = Vector2.new(0.5, 0.5),
@@ -588,7 +564,6 @@ textLabel(header, "Design your name in 3D letters", {
 })
 
 do -- BLOCK logo
--- Glowing RXDZ logo
 local logoHolder = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0.5),
 	Position = UDim2.new(1, -60, 0.5, 0),
@@ -996,7 +971,6 @@ local selectedStyle = "Plastic"
 local selectedFont = fontOf(CONFIG.DefaultFont)
 local swatches = {}
 
--- Studio options (applied to the next name)
 local SIZES = {
 	{ key = "S", title = "Small" },
 	{ key = "M", title = "Medium" },
@@ -1159,7 +1133,6 @@ for index, item in ipairs(PALETTE) do
 	end)
 end
 
--- Dual color controls (next to the LETTER COLOR title)
 local dualButton = new("TextButton", {
 	Text = "DUAL",
 	AnchorPoint = Vector2.new(1, 0),
@@ -1459,10 +1432,9 @@ end -- BLOCK studio
 -- 3D engine (letters loaded from asset IDs)
 ---------------------------------------------------------------------
 local templates = {}
-local animated = {} -- dual color names: group -> { c1, c2, letters }
-local packs = {} -- per font: { index = table or nil, failed = bool }
+local animated = {}
+local packs = {}
 
--- Removes invisible helper parts (they would break size and color of the letter)
 local function stripInvisible(model)
 	for _, item in ipairs(model:GetDescendants()) do
 		if item:IsA("BasePart") and item.Transparency >= 0.95 then
@@ -1514,7 +1486,6 @@ local NUMBER_WORDS = {
 	five = "5", six = "6", seven = "7", eight = "8", nine = "9",
 }
 
--- "Meshes/C" -> "C", "Meshes/Five" -> "5", "A" -> "A", anything else -> nil
 local function keyFromName(name)
 	local tail = string.match(name, "([^/" .. utf8.char(92) .. "]+)$") or name
 	tail = trim(tail)
@@ -1546,7 +1517,6 @@ local function getPackIndex(font)
 		state.failed = true
 		return nil
 	end
-	-- Case-sensitive index: "a" and "A" are two different models in a pack
 	local index = {}
 	local function accept(child)
 		return child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder")
@@ -1598,7 +1568,6 @@ local function getTemplate(font, character)
 	local source = nil
 	local index = getPackIndex(font)
 	if index then
-		-- exact character first (a vs A), then the other case as a fallback
 		source = index[character] or index[oppositeCase(character)]
 	end
 	local ids = font.letterIds or {}
@@ -1676,7 +1645,6 @@ local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
 end
 
--- Where the map starts (SpawnLocation). Studio Lite opens you around here.
 local function findSpawnPosition()
 	local spawn = nil
 	pcall(function()
@@ -1688,8 +1656,6 @@ local function findSpawnPosition()
 	return Vector3.new(0, 0.5, 0)
 end
 
--- Height for the next name: the spawn height, or just above any names already standing
--- at that spot, so names made in the same place never overlap.
 local function nextHeight(center, skipEntry)
 	local anchor = findSpawnPosition()
 	local y = anchor.Y + CONFIG.HeightOffset
@@ -1704,14 +1670,12 @@ local function nextHeight(center, skipEntry)
 	return y
 end
 
--- Where you are looking from: the editor camera (Studio Lite), else your character.
 local function viewBasis()
 	local camera = Workspace.CurrentCamera
 	if camera then
 		local cf = camera.CFrame
 		local forward = flat(cf.LookVector)
 		if forward.Magnitude < 0.3 then
-			-- looking down: the top of the screen is "forward"
 			local up = flat(cf.UpVector)
 			if up.Magnitude > 0.05 then
 				forward = up
@@ -1735,13 +1699,11 @@ local function viewBasis()
 	return anchor + Vector3.new(0, 10, 40), Vector3.new(0, 0, -1), Vector3.new(0, 0, -1)
 end
 
--- In front of you, at the same height as before (spawn height, stacked), facing you.
 local function getPlacement(skipEntry)
 	local position, look, forward = viewBasis()
 	local anchor = findSpawnPosition()
 	local baseY = anchor.Y + CONFIG.HeightOffset
 
-	-- the spot where your view meets the name height
 	local point = nil
 	if look.Y < -0.05 then
 		local t = (baseY - position.Y) / look.Y
@@ -1773,22 +1735,33 @@ local function modelNameOf(entry)
 	return "DZHUP_" .. entry.id
 end
 
--- Effects script (Studio Lite does not let a tool write code into a Script, so this code is
--- either installed automatically when possible, or copied to the clipboard for ONE paste).
--- Where it goes: ServerScriptService > Script named DZHUP_Effects. It reads the effect data
--- saved inside every name (attributes), so effects keep playing after save / close / reopen.
+---------------------------------------------------------------------
+-- Effects script (installed AUTOMATICALLY into ServerScriptService)
+---------------------------------------------------------------------
+local EFFECT_VERSION = 4
+
 local EFFECT_SOURCE = [==[
 --[[
 DZ HUP | Name Effects
-Script named DZHUP_Effects inside ServerScriptService.
-Reads the effect data saved inside every name (Workspace > DZHUP_Names) and plays
-dual color flow, rainbow, float and glow color. It changes nothing else.
+Installed automatically by the DZ HUP Name Maker.
+Reads the effect data saved inside every name (Workspace > DZHUP_Names), keeps every
+letter anchored (so names never fall) and plays dual color flow, rainbow, float and glow.
 ]]
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local FOLDER_NAME = "DZHUP_Names"
 local tracked = {}
+
+local function anchorAll(model)
+	for _, item in ipairs(model:GetDescendants()) do
+		if item:IsA("BasePart") then
+			item.Anchored = true
+			item.CanCollide = false
+			item.CanTouch = false
+		end
+	end
+end
 
 local function collect(model)
 	local info = {
@@ -1837,19 +1810,36 @@ local function collect(model)
 	return info
 end
 
-task.spawn(function()
-	while true do
-		local folder = Workspace:FindFirstChild(FOLDER_NAME)
-		if folder then
-			for _, model in ipairs(folder:GetChildren()) do
-				if not tracked[model] and model:IsA("Model") and model:GetAttribute("DZ_FX") == true then
-					pcall(function()
-						tracked[model] = collect(model)
-					end)
-				end
-			end
+local function track(model)
+	if tracked[model] or not model:IsA("Model") then
+		return
+	end
+	pcall(anchorAll, model)
+	if model:GetAttribute("DZ_FX") == true then
+		local ok, info = pcall(collect, model)
+		if ok then
+			tracked[model] = info
 		end
-		task.wait(1)
+	end
+end
+
+local function watch(folder)
+	for _, model in ipairs(folder:GetChildren()) do
+		track(model)
+	end
+	folder.ChildAdded:Connect(function(model)
+		task.wait(0.2)
+		track(model)
+	end)
+end
+
+local existing = Workspace:FindFirstChild(FOLDER_NAME)
+if existing then
+	watch(existing)
+end
+Workspace.ChildAdded:Connect(function(child)
+	if child.Name == FOLDER_NAME then
+		watch(child)
 	end
 end)
 
@@ -1891,11 +1881,114 @@ RunService.Heartbeat:Connect(function()
 end)
 ]==]
 
-local function effectsScriptMissing()
+local EFFECT_MARK = "DZ HUP | Name Effects"
+
+local function getEffectsScript()
 	local ok, found = pcall(function()
-		return game:GetService("ServerScriptService"):FindFirstChild("DZHUP_Effects") ~= nil
+		return game:GetService("ServerScriptService"):FindFirstChild("DZHUP_Effects")
 	end)
-	return not (ok and found)
+	return ok and found or nil
+end
+
+local function effectsNeedsInstall()
+	local existing = getEffectsScript()
+	if not existing then
+		return true
+	end
+	local version = 0
+	pcall(function()
+		version = existing:GetAttribute("DZ_Version") or 0
+	end)
+	return version < EFFECT_VERSION
+end
+
+-- Tries every known way to write code into a Script. Returns true only if the code can be read back.
+local function writeSource(target)
+	local methods = {
+		function()
+			target.Source = EFFECT_SOURCE
+		end,
+		function()
+			if type(setscriptable) == "function" then
+				setscriptable(target, "Source", true)
+				target.Source = EFFECT_SOURCE
+			end
+		end,
+		function()
+			if type(sethiddenproperty) == "function" then
+				sethiddenproperty(target, "Source", EFFECT_SOURCE)
+			end
+		end,
+		function()
+			game:GetService("ScriptEditorService"):UpdateSourceAsync(target, function()
+				return EFFECT_SOURCE
+			end)
+		end,
+	}
+	for _, method in ipairs(methods) do
+		pcall(method)
+		local ok, back = pcall(function()
+			return target.Source
+		end)
+		if ok and type(back) == "string" and string.find(back, EFFECT_MARK, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Installs or updates the effects script by itself. No paste needed.
+local function installEffects()
+	local sss = game:GetService("ServerScriptService")
+	local target = getEffectsScript()
+	local created = false
+	if not target then
+		local ok, made = pcall(function()
+			local s = Instance.new("Script")
+			s.Name = "DZHUP_Effects"
+			s.Parent = sss
+			return s
+		end)
+		if not ok or not made then
+			return false
+		end
+		target = made
+		created = true
+	end
+	if writeSource(target) then
+		pcall(function()
+			target.Enabled = true
+			target:SetAttribute("DZ_Version", EFFECT_VERSION)
+		end)
+		return true
+	end
+	if created then
+		pcall(function()
+			target:Destroy()
+		end)
+	end
+	return false
+end
+
+local effectsFailedOnce = false
+local function ensureEffects(silent)
+	if not effectsNeedsInstall() then
+		return true
+	end
+	local ok = installEffects()
+	if ok then
+		if not silent then
+			print("[DZHUP] Effects script installed automatically in ServerScriptService.")
+		end
+		return true
+	end
+	if not effectsFailedOnce then
+		effectsFailedOnce = true
+		warn("[DZHUP] This editor does not allow writing code into a Script. Names stay anchored and colored, but animation in Play mode needs the Effects script.")
+		-- last resort only: put the code in the clipboard so it is one paste away
+		copyText(EFFECT_SOURCE)
+	end
+	return false
 end
 
 local function buildName(entry)
@@ -1950,7 +2043,6 @@ local function buildName(entry)
 		totalWidth += piece.width + gap
 	end
 
-	-- shape: returns sideways offset, height offset and tilt (radians) for a letter at xc
 	local arcAngle = math.min(math.rad(110), totalWidth / (maxHeight * 3))
 	local radius = arcAngle > 0.01 and totalWidth / arcAngle or nil
 	local function shapeAt(xc)
@@ -2055,8 +2147,6 @@ local function buildName(entry)
 		local fxBase = group:GetPivot()
 		local fxAmp = 0.35 * math.max(scale, 0.6)
 		local fxPhase = math.random() * math.pi * 2
-		-- Effect data is written on the model itself (attributes are saved with the project),
-		-- so the Effects script can bring the animation back after saving and reopening.
 		pcall(function()
 			group:SetAttribute("DZ_FX", true)
 			group:SetAttribute("DZ_C1", color)
@@ -2577,7 +2667,6 @@ textLabel(aboutRight, "Made by " .. CONFIG.Creator .. "  |  " .. CONFIG.Communit
 	TextColor3 = THEME.accent,
 })
 
--- Resolve the avatar picture without blocking the UI
 task.spawn(function()
 	local image = nil
 	if CONFIG.AvatarImageUrl ~= "" and hasFS and type(getcustomasset) == "function" then
@@ -2768,7 +2857,6 @@ corner(veil, 16)
 local isOpen = false
 local openToken = 0
 
--- RX icon: slides away when the window opens, pops back with a ripple when it closes
 local function hideOpenButton(token)
 	tween(openButtonScale, 0.28, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
 	tween(openButton, 0.28, { Rotation = 120, BackgroundTransparency = 1, TextTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -2797,7 +2885,6 @@ local function showOpenButton(token)
 		tween(openButton, 0.4, { BackgroundTransparency = 0.5, TextTransparency = 0.1 }, Enum.EasingStyle.Sine)
 		tween(openStroke, 0.5, { Transparency = 0.45 }, Enum.EasingStyle.Sine)
 
-		-- ripple ring that expands from the icon
 		local ring = new("Frame", {
 			AnchorPoint = Vector2.new(0.5, 0.5),
 			Position = UDim2.new(0, 34, 0.5, 0),
@@ -2813,7 +2900,6 @@ local function showOpenButton(token)
 			ring:Destroy()
 		end)
 
-		-- small glow pulse on the icon after it lands
 		task.delay(0.45, function()
 			if token ~= openToken or isOpen then
 				return
@@ -3013,13 +3099,15 @@ local function submit()
 		rememberSettings()
 		local saved = persist()
 		renderList()
-		local needEffects = (entry.color2 ~= nil or entry.fx ~= nil) and effectsScriptMissing()
-		if needEffects then
-			copyText(EFFECT_SOURCE)
-			print("[DZHUP] Effects code copied. Create a Script named DZHUP_Effects inside ServerScriptService and paste it (one time only).")
-			showToast("Effects code copied: paste it in ServerScriptService > DZHUP_Effects", true)
-		elseif saved then
-			showToast("Name created and saved", true)
+
+		-- automatic: make sure the effects script exists in the project (no manual step)
+		local effectsOk = ensureEffects(false)
+		if saved then
+			if effectsOk then
+				showToast("Name created and saved", true)
+			else
+				showToast("Name created (effects script could not be installed here)", true)
+			end
 		else
 			showToast("Name created (saving is not supported here)", true)
 		end
@@ -3096,16 +3184,20 @@ genv.DZHUP_NameMakerCleanup = function()
 	end)
 end
 
+-- Install / update the effects script right away (automatic, even before any name exists)
+task.spawn(function()
+	task.wait(0.5)
+	ensureEffects(false)
+end)
+
 -- Restore saved names for this place
--- Only the letters are rebuilt. The character is never touched.
 task.spawn(function()
 	local warned = false
-	task.wait(1) -- let the map finish loading so the spawn area is known
+	task.wait(1)
 
 	local anchor = findSpawnPosition()
 	local moved = 0
 
-	-- wait for the camera so we know where you are
 	local waited = 0
 	while not Workspace.CurrentCamera and waited < 5 do
 		task.wait(0.25)
@@ -3114,7 +3206,6 @@ task.spawn(function()
 	local viewPosition = viewBasis()
 
 	for _, entry in ipairs(names) do
-		-- a name saved far from you (another project, or up in the air) is brought in front of you
 		if type(entry.center) == "table" then
 			local saved = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
 			if flat(saved - viewPosition).Magnitude > CONFIG.RestoreMaxDistance or saved.Y > anchor.Y + 200 then
@@ -3141,7 +3232,7 @@ for _, font in ipairs(FONTS) do
 	end
 end
 
--- Native Roblox notifications: Discord first, then WhatsApp
+-- Native Roblox notifications: Discord first, then WhatsApp, then TikTok
 local function askNotification(title, text, yesText, onYes)
 	local answered = false
 	local callback = Instance.new("BindableFunction")
@@ -3151,7 +3242,6 @@ local function askNotification(title, text, yesText, onYes)
 			onYes()
 		end
 	end
-	-- the Roblox core UI can take a moment to accept notifications, so retry a few times
 	local sent = false
 	for _ = 1, 8 do
 		local ok = pcall(function()
@@ -3174,10 +3264,10 @@ local function askNotification(title, text, yesText, onYes)
 		callback:Destroy()
 		return
 	end
-	local waited = 0
-	while not answered and waited < 16 do
+	local waitedNote = 0
+	while not answered and waitedNote < 16 do
 		task.wait(0.25)
-		waited += 0.25
+		waitedNote += 0.25
 	end
 	callback:Destroy()
 end
@@ -3188,7 +3278,6 @@ local function notifyCopied(text)
 	end)
 end
 
--- Shown on every launch: Discord first, then WhatsApp, then TikTok
 if CONFIG.PromptOnLaunch then
 	task.spawn(function()
 		task.wait(3)
@@ -3217,36 +3306,3 @@ if CONFIG.PromptOnLaunch then
 		end)
 	end)
 end
-
--- Effects script: try to install it automatically (works only if this editor allows it)
-do -- BLOCK effectInstall
-	task.spawn(function()
-		task.wait(1)
-		if not effectsScriptMissing() then
-			return
-		end
-		local installed = false
-		pcall(function()
-			local probe = Instance.new("Script")
-			probe.Name = "DZHUP_Effects"
-			probe.Source = EFFECT_SOURCE
-			local back = probe.Source
-			if type(back) == "string" and string.find(back, "DZ HUP", 1, true) then
-				probe.Parent = game:GetService("ServerScriptService")
-				installed = true
-			else
-				probe:Destroy()
-			end
-		end)
-		if installed then
-			notifyCopied("Effects script installed in ServerScriptService")
-			return
-		end
-		for _, entry in ipairs(names) do
-			if entry.color2 ~= nil or entry.fx ~= nil then
-				warn("[DZHUP] Effects need one Script named DZHUP_Effects in ServerScriptService. Make a name with effects and the code is copied for you to paste.")
-				break
-			end
-		end
-	end)
-end -- BLOCK effectInstall
