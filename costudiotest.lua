@@ -43,6 +43,7 @@ local CONFIG = {
 	Fonts = {
 		{ key = "Rockwell", title = "Rockwell", packId = 4506165589, letterIds = {} },
 		{ key = "GothamBlack", title = "Gotham Black", packId = 15715862597, letterIds = {} },
+		{ key = "Horror", title = "Horror", packId = 3789128815, letterIds = {} },
 	},
 
 	SaveFile = "DZHUP_NameMaker.json",
@@ -993,7 +994,7 @@ end
 for index, item in ipairs(FONTS) do
 	local button = new("TextButton", {
 		Text = item.title,
-		Size = UDim2.fromOffset(102, 30),
+		Size = UDim2.fromOffset(96, 30),
 		TextSize = 11,
 		Font = Enum.Font.GothamBold,
 		TextColor3 = THEME.text,
