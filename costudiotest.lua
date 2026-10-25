@@ -50,13 +50,15 @@ local CONFIG = {
 	MaxNames = 40,
 	LetterGap = 0.16,
 	SpaceWidthRatio = 0.6,
-	PlaceDistance = 7,
+	PlaceDistance = 18, -- fallback distance in front of you
+	MaxPlaceDistance = 150, -- furthest point your view can hit when placing a name
+	StackRadius = 25, -- names closer than this are stacked above each other
 	HeightOffset = 2.8,
 	-- true = the readable face of each letter is -Z. Set false if names look mirrored.
 	FrontFaceIsNegativeZ = true,
 	-- Saved names come back where you saved them. If a saved name is farther than this
-	-- from the spawn area (for example you opened another project), it is placed around the spawn instead.
-	RestoreMaxDistance = 40,
+	-- from you (for example you opened another project), it is placed in front of you instead.
+	RestoreMaxDistance = 150,
 }
 
 ---------------------------------------------------------------------
@@ -1147,15 +1149,15 @@ local function findSpawnPosition()
 	return Vector3.new(0, 0.5, 0)
 end
 
--- Height for the next name: just above the names already standing around the spawn,
--- so every name you make appears in the same area without overlapping the others.
-local function nextHeight(skipEntry)
+-- Height for the next name: the spawn height, or just above any names already standing
+-- at that spot, so names made in the same place never overlap.
+local function nextHeight(center, skipEntry)
 	local anchor = findSpawnPosition()
 	local y = anchor.Y + CONFIG.HeightOffset
 	for _, item in ipairs(names) do
 		if item ~= skipEntry and type(item.center) == "table" then
 			local c = Vector3.new(item.center[1], item.center[2], item.center[3])
-			if flat(c - anchor).Magnitude <= CONFIG.RestoreMaxDistance and c.Y < anchor.Y + 200 then
+			if flat(c - center).Magnitude <= CONFIG.StackRadius and c.Y < anchor.Y + 200 then
 				y = math.max(y, c.Y + (item.h or 6) + 1.5)
 			end
 		end
@@ -1163,32 +1165,65 @@ local function nextHeight(skipEntry)
 	return y
 end
 
--- Always the spawn area (the SpawnLocation position), turned toward your camera.
-local function areaPlacement(height)
-	local anchor = findSpawnPosition()
-	local viewer = anchor + Vector3.new(0, 0, 40)
+-- Where you are looking from: the editor camera (Studio Lite), else your character.
+local function viewBasis()
 	local camera = Workspace.CurrentCamera
 	if camera then
-		viewer = camera.CFrame.Position
+		local cf = camera.CFrame
+		local forward = flat(cf.LookVector)
+		if forward.Magnitude < 0.3 then
+			-- looking down: the top of the screen is "forward"
+			local up = flat(cf.UpVector)
+			if up.Magnitude > 0.05 then
+				forward = up
+			end
+		end
+		if forward.Magnitude < 0.05 then
+			forward = Vector3.new(0, 0, -1)
+		end
+		return cf.Position, cf.LookVector, forward.Unit
+	end
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if root then
+		local forward = flat(root.CFrame.LookVector)
+		if forward.Magnitude < 0.05 then
+			forward = Vector3.new(0, 0, -1)
+		end
+		return root.Position, root.CFrame.LookVector, forward.Unit
+	end
+	local anchor = findSpawnPosition()
+	return anchor + Vector3.new(0, 10, 40), Vector3.new(0, 0, -1), Vector3.new(0, 0, -1)
+end
+
+-- In front of you, at the same height as before (spawn height, stacked), facing you.
+local function getPlacement(skipEntry)
+	local position, look, forward = viewBasis()
+	local anchor = findSpawnPosition()
+	local baseY = anchor.Y + CONFIG.HeightOffset
+
+	-- the spot where your view meets the name height
+	local point = nil
+	if look.Y < -0.05 then
+		local t = (baseY - position.Y) / look.Y
+		if t > 12 and t <= CONFIG.MaxPlaceDistance then
+			point = position + look * t
+		end
+	end
+	if not point then
+		point = position + forward * CONFIG.PlaceDistance
 	end
 
-	local center = Vector3.new(anchor.X, height or (anchor.Y + CONFIG.HeightOffset), anchor.Z)
-	local toward = flat(viewer - center)
-	if toward.Magnitude < 0.05 then
-		toward = Vector3.new(0, 0, 1)
-	end
-	toward = toward.Unit
+	local flatPoint = Vector3.new(point.X, 0, point.Z)
+	local center = Vector3.new(point.X, nextHeight(flatPoint, skipEntry), point.Z)
 
+	local toward = -forward
 	local rotation = CFrame.lookAt(Vector3.zero, toward).Rotation
 	if not CONFIG.FrontFaceIsNegativeZ then
 		rotation = rotation * CFrame.Angles(0, math.pi, 0)
 	end
-	local right = (-toward):Cross(Vector3.yAxis)
+	local right = forward:Cross(Vector3.yAxis)
 	return center, rotation, right.Unit
-end
-
-local function getPlacement(skipEntry)
-	return areaPlacement(nextHeight(skipEntry))
 end
 
 local function storePlacement(entry, center, rotation, right)
@@ -2045,11 +2080,19 @@ task.spawn(function()
 	local anchor = findSpawnPosition()
 	local moved = 0
 
+	-- wait for the camera so we know where you are
+	local waited = 0
+	while not Workspace.CurrentCamera and waited < 5 do
+		task.wait(0.25)
+		waited += 0.25
+	end
+	local viewPosition = viewBasis()
+
 	for _, entry in ipairs(names) do
-		-- a name saved away from the spawn area (another project, or up in the air) is brought back here
+		-- a name saved far from you (another project, or up in the air) is brought in front of you
 		if type(entry.center) == "table" then
 			local saved = Vector3.new(entry.center[1], entry.center[2], entry.center[3])
-			if flat(saved - anchor).Magnitude > CONFIG.RestoreMaxDistance or saved.Y > anchor.Y + 200 then
+			if flat(saved - viewPosition).Magnitude > CONFIG.RestoreMaxDistance or saved.Y > anchor.Y + 200 then
 				local center, rotation, right = getPlacement(entry)
 				moved += 1
 				storePlacement(entry, center, rotation, right)
