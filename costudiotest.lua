@@ -7,8 +7,9 @@ letters are loaded from Roblox asset IDs automatically.
 Names are saved to a file and restored on the next launch.
 
 v3: effects (dual color flow, rainbow, float, glow) are now saved INSIDE each name
-(attributes on the model). Every animated name also gets its own Script (DZHUP_Effect) inside it,
-so the effects keep playing after you save the project and open it again. Run this script once so old names
+(attributes on the model). Effect data is saved inside every name. The effects code lives in ONE Script named
+DZHUP_Effects in ServerScriptService (installed automatically if the editor allows it,
+otherwise the code is copied to your clipboard when you make a name with effects). Run this script once so old names
 are rebuilt with the new data, then save the project.
 
 FIX: the main chunk had more than 200 local variables at the same time
@@ -1772,59 +1773,85 @@ local function modelNameOf(entry)
 	return "DZHUP_" .. entry.id
 end
 
--- Script that is created INSIDE every animated name and saved with the project.
--- It reads the effect data stored on its own name (attributes) and plays the effects.
+-- Effects script (Studio Lite does not let a tool write code into a Script, so this code is
+-- either installed automatically when possible, or copied to the clipboard for ONE paste).
+-- Where it goes: ServerScriptService > Script named DZHUP_Effects. It reads the effect data
+-- saved inside every name (attributes), so effects keep playing after save / close / reopen.
 local EFFECT_SOURCE = [==[
--- DZ HUP | name effect (lives inside this name, saved with the project)
+--[[
+DZ HUP | Name Effects
+Script named DZHUP_Effects inside ServerScriptService.
+Reads the effect data saved inside every name (Workspace > DZHUP_Names) and plays
+dual color flow, rainbow, float and glow color. It changes nothing else.
+]]
 local RunService = game:GetService("RunService")
-local model = script.Parent
-if not model or not model:IsA("Model") then
-	return
-end
+local Workspace = game:GetService("Workspace")
 
-local c1 = model:GetAttribute("DZ_C1")
-local c2 = model:GetAttribute("DZ_C2")
-local useColors = model:GetAttribute("DZ_Colors") == true
-local rainbow = model:GetAttribute("DZ_Rainbow") == true
-local floating = model:GetAttribute("DZ_Float") == true
-local amp = model:GetAttribute("DZ_Amp") or 0.35
-local phase = model:GetAttribute("DZ_Phase") or 0
-local base = model:GetAttribute("DZ_Base")
-local speed = model:GetAttribute("DZ_Speed") or 0.35
-local spread = model:GetAttribute("DZ_Spread") or 1
+local FOLDER_NAME = "DZHUP_Names"
+local tracked = {}
 
-if typeof(c1) ~= "Color3" then
-	c1 = Color3.new(1, 1, 1)
-end
-if typeof(c2) ~= "Color3" then
-	c2 = nil
-end
-if typeof(base) ~= "CFrame" then
-	base = model:GetPivot()
-end
-
-local letters = {}
-if useColors then
-	for _, letter in ipairs(model:GetChildren()) do
-		local t = letter:GetAttribute("DZ_T")
-		if type(t) == "number" then
-			local parts = {}
-			if letter:IsA("BasePart") then
-				parts[#parts + 1] = letter
-			end
-			for _, item in ipairs(letter:GetDescendants()) do
-				if item:IsA("BasePart") then
-					parts[#parts + 1] = item
+local function collect(model)
+	local info = {
+		c1 = model:GetAttribute("DZ_C1"),
+		c2 = model:GetAttribute("DZ_C2"),
+		colors = model:GetAttribute("DZ_Colors") == true,
+		rainbow = model:GetAttribute("DZ_Rainbow") == true,
+		floating = model:GetAttribute("DZ_Float") == true,
+		amp = model:GetAttribute("DZ_Amp") or 0.35,
+		phase = model:GetAttribute("DZ_Phase") or 0,
+		base = model:GetAttribute("DZ_Base"),
+		speed = model:GetAttribute("DZ_Speed") or 0.35,
+		spread = model:GetAttribute("DZ_Spread") or 1,
+		letters = {},
+	}
+	if typeof(info.c1) ~= "Color3" then
+		info.c1 = Color3.new(1, 1, 1)
+	end
+	if typeof(info.c2) ~= "Color3" then
+		info.c2 = nil
+	end
+	if typeof(info.base) ~= "CFrame" then
+		info.base = model:GetPivot()
+	end
+	if info.colors then
+		for _, letter in ipairs(model:GetChildren()) do
+			local t = letter:GetAttribute("DZ_T")
+			if type(t) == "number" then
+				local parts = {}
+				if letter:IsA("BasePart") then
+					parts[#parts + 1] = letter
 				end
+				for _, item in ipairs(letter:GetDescendants()) do
+					if item:IsA("BasePart") then
+						parts[#parts + 1] = item
+					end
+				end
+				info.letters[#info.letters + 1] = {
+					t = t,
+					parts = parts,
+					light = letter:FindFirstChildWhichIsA("PointLight", true),
+				}
 			end
-			letters[#letters + 1] = {
-				t = t,
-				parts = parts,
-				light = letter:FindFirstChildWhichIsA("PointLight", true),
-			}
 		end
 	end
+	return info
 end
+
+task.spawn(function()
+	while true do
+		local folder = Workspace:FindFirstChild(FOLDER_NAME)
+		if folder then
+			for _, model in ipairs(folder:GetChildren()) do
+				if not tracked[model] and model:IsA("Model") and model:GetAttribute("DZ_FX") == true then
+					pcall(function()
+						tracked[model] = collect(model)
+					end)
+				end
+			end
+		end
+		task.wait(1)
+	end
+end)
 
 local last = 0
 RunService.Heartbeat:Connect(function()
@@ -1833,31 +1860,43 @@ RunService.Heartbeat:Connect(function()
 		return
 	end
 	last = now
-
-	if useColors then
-		for _, letter in ipairs(letters) do
-			local blended = nil
-			if rainbow then
-				blended = Color3.fromHSV((letter.t * 0.8 - now * 0.12) % 1, 0.8, 1)
-			elseif c2 then
-				local wave = (math.sin((letter.t * spread - now * speed) * math.pi * 2) + 1) / 2
-				blended = c1:Lerp(c2, wave)
+	for model, info in pairs(tracked) do
+		if not model.Parent then
+			tracked[model] = nil
+		else
+			if info.colors then
+				for _, letter in ipairs(info.letters) do
+					local blended = nil
+					if info.rainbow then
+						blended = Color3.fromHSV((letter.t * 0.8 - now * 0.12) % 1, 0.8, 1)
+					elseif info.c2 then
+						local wave = (math.sin((letter.t * info.spread - now * info.speed) * math.pi * 2) + 1) / 2
+						blended = info.c1:Lerp(info.c2, wave)
+					end
+					if blended then
+						for _, part in ipairs(letter.parts) do
+							part.Color = blended
+						end
+						if letter.light then
+							letter.light.Color = blended
+						end
+					end
+				end
 			end
-			if blended then
-				for _, part in ipairs(letter.parts) do
-					part.Color = blended
-				end
-				if letter.light then
-					letter.light.Color = blended
-				end
+			if info.floating then
+				model:PivotTo(info.base + Vector3.new(0, math.sin(now * 1.4 + info.phase) * info.amp, 0))
 			end
 		end
 	end
-	if floating then
-		model:PivotTo(base + Vector3.new(0, math.sin(now * 1.4 + phase) * amp, 0))
-	end
 end)
 ]==]
+
+local function effectsScriptMissing()
+	local ok, found = pcall(function()
+		return game:GetService("ServerScriptService"):FindFirstChild("DZHUP_Effects") ~= nil
+	end)
+	return not (ok and found)
+end
 
 local function buildName(entry)
 	local font = fontOf(entry.font)
@@ -2033,17 +2072,6 @@ local function buildName(entry)
 			group:SetAttribute("DZ_Speed", CONFIG.WaveSpeed)
 			group:SetAttribute("DZ_Spread", CONFIG.WaveSpread)
 		end)
-		-- the effect script itself, stored inside the name
-		local scriptOk, scriptError = pcall(function()
-			local fxScript = Instance.new("Script")
-			fxScript.Name = "DZHUP_Effect"
-			fxScript.Source = EFFECT_SOURCE
-			fxScript.Parent = group
-		end)
-		if not scriptOk and not genv.DZHUP_SourceWarned then
-			genv.DZHUP_SourceWarned = true
-			warn("[DZHUP] Could not put the effect script inside the name: " .. tostring(scriptError))
-		end
 		animated[group] = {
 			c1 = color,
 			c2 = color2,
@@ -2985,7 +3013,12 @@ local function submit()
 		rememberSettings()
 		local saved = persist()
 		renderList()
-		if saved then
+		local needEffects = (entry.color2 ~= nil or entry.fx ~= nil) and effectsScriptMissing()
+		if needEffects then
+			copyText(EFFECT_SOURCE)
+			print("[DZHUP] Effects code copied. Create a Script named DZHUP_Effects inside ServerScriptService and paste it (one time only).")
+			showToast("Effects code copied: paste it in ServerScriptService > DZHUP_Effects", true)
+		elseif saved then
 			showToast("Name created and saved", true)
 		else
 			showToast("Name created (saving is not supported here)", true)
@@ -3184,3 +3217,36 @@ if CONFIG.PromptOnLaunch then
 		end)
 	end)
 end
+
+-- Effects script: try to install it automatically (works only if this editor allows it)
+do -- BLOCK effectInstall
+	task.spawn(function()
+		task.wait(1)
+		if not effectsScriptMissing() then
+			return
+		end
+		local installed = false
+		pcall(function()
+			local probe = Instance.new("Script")
+			probe.Name = "DZHUP_Effects"
+			probe.Source = EFFECT_SOURCE
+			local back = probe.Source
+			if type(back) == "string" and string.find(back, "DZ HUP", 1, true) then
+				probe.Parent = game:GetService("ServerScriptService")
+				installed = true
+			else
+				probe:Destroy()
+			end
+		end)
+		if installed then
+			notifyCopied("Effects script installed in ServerScriptService")
+			return
+		end
+		for _, entry in ipairs(names) do
+			if entry.color2 ~= nil or entry.fx ~= nil then
+				warn("[DZHUP] Effects need one Script named DZHUP_Effects in ServerScriptService. Make a name with effects and the code is copied for you to paste.")
+				break
+			end
+		end
+	end)
+end -- BLOCK effectInstall
