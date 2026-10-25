@@ -45,6 +45,8 @@ local CONFIG = {
 		{ key = "Rockwell", title = "Rockwell", packId = 4506165589, letterIds = {} },
 		{ key = "GothamBlack", title = "Gotham Black", packId = 15715862597, letterIds = {} },
 		{ key = "Horror", title = "Horror", packId = 3789128815, letterIds = {} },
+		-- letters are built from many parts and lie flat on the ground in the pack, so stand them up
+		{ key = "Alphabet", title = "Alphabet", packId = 13447092806, letterIds = {}, orient = Vector3.new(90, 0, 0), frontNegZ = false },
 	},
 
 	SaveFile = "DZHUP_NameMaker.json",
@@ -1102,8 +1104,8 @@ end
 for index, item in ipairs(FONTS) do
 	local button = new("TextButton", {
 		Text = item.title,
-		Size = UDim2.fromOffset(96, 30),
-		TextSize = 11,
+		Size = UDim2.fromOffset(74, 30),
+		TextSize = 10,
 		Font = Enum.Font.GothamBold,
 		TextColor3 = THEME.text,
 		BackgroundColor3 = THEME.surface2,
@@ -2470,4 +2472,3 @@ if CONFIG.PromptOnLaunch then
 		end)
 	end)
 end
-
