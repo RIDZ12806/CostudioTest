@@ -2,6 +2,9 @@
 DZ HUP  |  3D Name Maker  (Executor Edition)
 Made by RiyadoDzz
 
+v8: click sound forced (downloaded once, played from a local file), World tab with
+Day / Night, Sparkles are now an optional effect (off by default).
+
 v7: float and dual color rebuilt ONLY from legacy body movers (BodyForce / BodyPosition /
 BodyGyro), the same kind of object that already keeps your names in place after reopening.
 Old v6 float pieces (welds, constraints) are removed automatically.
@@ -78,6 +81,7 @@ local CONFIG = {
 	SaveFile = "DZHUP_NameMaker.json",
 	PromptOnLaunch = true,
 
+	ClickSoundAssetId = 70968472837037, -- played from a downloaded local file, so it works without publishing
 	ClickSoundIds = {
 		"rbxasset://sounds/button.wav",
 		"rbxasset://sounds/switch.wav",
@@ -437,7 +441,71 @@ local clickSound = new("Sound", {
 }, SoundService)
 
 task.spawn(function()
+	local candidates = {}
+	local assetId = CONFIG.ClickSoundAssetId
+	local localAsset = nil
+
+	-- 1) download the sound once and play it from a local file (works in Studio Lite,
+	--    no publishing and no asset permission needed)
+	if assetId and hasFS and type(getcustomasset) == "function" then
+		local fileName = "DZHUP_click_" .. tostring(assetId) .. ".mp3"
+		local have = false
+		pcall(function()
+			have = isfile(fileName) and #readfile(fileName) > 1000
+		end)
+		if not have then
+			local function download(url)
+				local ok, body = pcall(function()
+					return game:HttpGet(url)
+				end)
+				if ok and type(body) == "string" and #body > 1000 and string.sub(body, 1, 7) ~= "<roblox" then
+					return body
+				end
+				for _, key in ipairs({ "request", "http_request" }) do
+					local fn = genv[key] or _G[key]
+					if type(fn) == "function" then
+						local ok2, response = pcall(fn, { Url = url, Method = "GET" })
+						local data = ok2 and type(response) == "table" and response.Body
+						if type(data) == "string" and #data > 1000 and string.sub(data, 1, 7) ~= "<roblox" then
+							return data
+						end
+					end
+				end
+				if type(genv.syn) == "table" and type(genv.syn.request) == "function" then
+					local ok3, response = pcall(genv.syn.request, { Url = url, Method = "GET" })
+					local data = ok3 and type(response) == "table" and response.Body
+					if type(data) == "string" and #data > 1000 and string.sub(data, 1, 7) ~= "<roblox" then
+						return data
+					end
+				end
+				return nil
+			end
+			local body = download("https://assetdelivery.roblox.com/v1/asset/?id=" .. tostring(assetId))
+				or download("https://assetdelivery.roblox.com/v1/asset?id=" .. tostring(assetId))
+			if body then
+				pcall(function()
+					writefile(fileName, body)
+					have = true
+				end)
+			end
+		end
+		if have then
+			local ok, asset = pcall(getcustomasset, fileName)
+			if ok and asset then
+				localAsset = asset
+				table.insert(candidates, asset)
+			end
+		end
+	end
+	-- 2) the asset id itself, then the official Roblox sounds
+	if assetId then
+		table.insert(candidates, "rbxassetid://" .. tostring(assetId))
+	end
 	for _, id in ipairs(CONFIG.ClickSoundIds) do
+		table.insert(candidates, id)
+	end
+
+	for _, id in ipairs(candidates) do
 		local test = Instance.new("Sound")
 		test.SoundId = id
 		test.Volume = 0
@@ -456,6 +524,10 @@ task.spawn(function()
 			clickSound.SoundId = id
 			return
 		end
+	end
+	-- forced: if nothing could be verified, still use the downloaded file
+	if localAsset then
+		clickSound.SoundId = localAsset
 	end
 end)
 
@@ -684,7 +756,7 @@ new("UIGradient", {
 -- Tabs and pages
 ---------------------------------------------------------------------
 local TAB_Y, CONTENT_Y = 70, 120
-local TAB_COUNT = 4
+local TAB_COUNT = 5
 
 local tabTrack = new("Frame", {
 	Position = UDim2.fromOffset(16, TAB_Y),
@@ -714,9 +786,10 @@ local createPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransp
 local studioPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
 local listPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
 local aboutPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
-local pages = { createPage, studioPage, listPage, aboutPage }
+local worldPage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
+local pages = { createPage, studioPage, listPage, worldPage, aboutPage }
 
-local TAB_TITLES = { "Create", "Studio", "My Names", "Creator" }
+local TAB_TITLES = { "Create", "Studio", "My Names", "World", "Creator" }
 local tabButtons = {}
 for i, title in ipairs(TAB_TITLES) do
 	tabButtons[i] = new("TextButton", {
@@ -1053,15 +1126,16 @@ local EFFECTS = {
 	{ key = "glow", title = "Glow" },
 	{ key = "float", title = "Float" },
 	{ key = "rainbow", title = "Rainbow" },
+	{ key = "sparkles", title = "Sparkles" },
 }
-local FX_TITLES = { glow = "Glow", float = "Float", rainbow = "Rainbow" }
+local FX_TITLES = { glow = "Glow", float = "Float", rainbow = "Rainbow", sparkles = "Sparkles" }
 
 local studio = {
 	size = "M",
 	gap = "N",
 	shape = "Straight",
 	case = "Normal",
-	fx = { glow = false, float = false, rainbow = false },
+	fx = { glow = false, float = false, rainbow = false, sparkles = false },
 }
 
 local function applyCase(text)
@@ -1863,10 +1937,10 @@ function H.addParticles(group)
 			ColorSequenceKeypoint.new(1, c1),
 		})
 	else
-		return
+		seq = ColorSequence.new(c1, Color3.new(1, 1, 1))
 	end
 	for _, letter in ipairs(group:GetChildren()) do
-		if type(letter:GetAttribute("DZ_T")) == "number" then
+		if (letter:IsA("Model") or letter:IsA("BasePart")) and letter.Name ~= "DZ_SweepOrb" then
 			pcall(function()
 				local best, bestVolume = nil, nil
 				for _, item in ipairs(letter:GetDescendants()) do
@@ -2101,8 +2175,20 @@ function H.upgrade(group)
 	if group:GetAttribute("DZ_FX") ~= true then
 		return
 	end
-	if group:GetAttribute("DZ_Colors") == true then
+	if group:GetAttribute("DZ_SparkOpt") == true then
 		H.addParticles(group)
+	elseif group:GetAttribute("DZ_Particles") == true then
+		-- sparkles are optional now: remove them from names made by an older version
+		for _, item in ipairs(group:GetDescendants()) do
+			if item.Name == "DZ_Shimmer" or item.Name == "DZ_Sparkles" then
+				item:Destroy()
+			end
+		end
+		pcall(function()
+			group:SetAttribute("DZ_Particles", nil)
+		end)
+	end
+	if group:GetAttribute("DZ_Colors") == true then
 		H.sweepOrb(group)
 	end
 	if group:GetAttribute("DZ_Float") == true and group:GetAttribute("DZ_PhysV") ~= 7 then
@@ -2666,7 +2752,7 @@ local function buildName(entry)
 		local _, size = group:GetBoundingBox()
 		entry.h = size.Y
 	end)
-	if colorAnim or fx.float then
+	if colorAnim or fx.float or fx.sparkles then
 		local fxBase = group:GetPivot()
 		local fxAmp = 0.35 * math.max(scale, 0.6)
 		local fxPhase = math.random() * math.pi * 2
@@ -2685,8 +2771,13 @@ local function buildName(entry)
 			group:SetAttribute("DZ_Speed", CONFIG.WaveSpeed)
 			group:SetAttribute("DZ_Spread", CONFIG.WaveSpread)
 		end)
-		if colorAnim then
+		if fx.sparkles then
+			pcall(function()
+				group:SetAttribute("DZ_SparkOpt", true)
+			end)
 			H.addParticles(group)
+		end
+		if colorAnim then
 			H.sweepOrb(group)
 		end
 		local physOk = false
@@ -3244,6 +3335,191 @@ end)
 end -- BLOCK creator
 
 ---------------------------------------------------------------------
+-- World page: Day / Night
+---------------------------------------------------------------------
+do -- BLOCK world
+local card = new("Frame", {
+	Size = UDim2.fromOffset(588, 356),
+	BackgroundColor3 = THEME.surface,
+	BorderSizePixel = 0,
+}, worldPage)
+corner(card, 12)
+stroke(card, THEME.line, 0.5, 1)
+
+sectionTitle(card, "TIME OF DAY", 12)
+local clockLabel = textLabel(card, "12:00", {
+	Position = UDim2.fromOffset(16, 10),
+	Size = UDim2.new(1, -32, 0, 20),
+	Font = Enum.Font.GothamBlack,
+	TextSize = 16,
+	TextColor3 = THEME.accent,
+	TextXAlignment = Enum.TextXAlignment.Right,
+})
+
+local PRESETS = { { "Dawn", 6 }, { "Day", 12 }, { "Sunset", 18 }, { "Night", 0 } }
+local presetRow = new("Frame", {
+	Position = UDim2.fromOffset(16, 40),
+	Size = UDim2.new(1, -32, 0, 34),
+	BackgroundTransparency = 1,
+}, card)
+new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	Padding = UDim.new(0, 8),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, presetRow)
+
+local presetButtons = {}
+local hour = 12
+local function lighting()
+	return game:GetService("Lighting")
+end
+pcall(function()
+	hour = lighting().ClockTime
+end)
+
+local knob = nil
+local function render()
+	clockLabel.Text = string.format("%02d:%02d", math.floor(hour) % 24, math.floor((hour % 1) * 60))
+	if knob then
+		knob.Position = UDim2.new(math.clamp(hour / 24, 0, 1), 0, 0.5, 0)
+	end
+	for _, item in ipairs(presetButtons) do
+		local active = math.abs(hour - item.hour) < 0.05
+		item.button.BackgroundColor3 = active and THEME.accent or THEME.surface2
+		item.button.TextColor3 = active and THEME.dark or THEME.text
+	end
+end
+
+local function setHour(value, commit)
+	hour = math.clamp(value, 0, 24)
+	pcall(function()
+		lighting().ClockTime = hour
+	end)
+	render()
+	if commit then
+		if type(save.settings.clock) ~= "table" then
+			save.settings.clock = {}
+		end
+		save.settings.clock[placeKey] = hour
+		persist()
+	end
+end
+
+for index, item in ipairs(PRESETS) do
+	local button = new("TextButton", {
+		Text = item[1],
+		Size = UDim2.fromOffset(126, 34),
+		TextSize = 12,
+		Font = Enum.Font.GothamBold,
+		TextColor3 = THEME.text,
+		BackgroundColor3 = THEME.surface2,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+		LayoutOrder = index,
+	}, presetRow)
+	corner(button, 8)
+	stroke(button, THEME.line, 0.4, 1)
+	table.insert(presetButtons, { button = button, hour = item[2] })
+	button.Activated:Connect(function()
+		setHour(item[2], true)
+	end)
+end
+
+sectionTitle(card, "EXACT HOUR (drag)", 94)
+local hit = new("Frame", {
+	Position = UDim2.fromOffset(16, 118),
+	Size = UDim2.new(1, -32, 0, 40),
+	BackgroundTransparency = 1,
+	Active = true,
+}, card)
+local bar = new("Frame", {
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 0, 0.5, 0),
+	Size = UDim2.new(1, 0, 0, 12),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+}, hit)
+corner(bar, 6)
+new("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(15, 18, 45)),
+		ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 170, 110)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(120, 200, 255)),
+		ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 120, 80)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 18, 45)),
+	}),
+}, bar)
+knob = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.5, 0),
+	Size = UDim2.fromOffset(24, 24),
+	BackgroundColor3 = THEME.accent,
+	BorderSizePixel = 0,
+	ZIndex = 3,
+}, hit)
+corner(knob, 12)
+stroke(knob, THEME.text, 0.3, 2)
+
+textLabel(card, "00", { Position = UDim2.fromOffset(16, 162), Size = UDim2.fromOffset(40, 14), TextSize = 10, TextColor3 = THEME.muted })
+textLabel(card, "12", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 162), Size = UDim2.fromOffset(40, 14), TextSize = 10, TextColor3 = THEME.muted, TextXAlignment = Enum.TextXAlignment.Center })
+textLabel(card, "24", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 162), Size = UDim2.fromOffset(40, 14), TextSize = 10, TextColor3 = THEME.muted, TextXAlignment = Enum.TextXAlignment.Right })
+
+textLabel(card, "The time is applied to the sky of your project and is saved with it. Save the project after changing it.", {
+	Position = UDim2.fromOffset(16, 196),
+	Size = UDim2.new(1, -32, 0, 34),
+	TextSize = 11,
+	TextColor3 = THEME.muted,
+	TextWrapped = true,
+	TextYAlignment = Enum.TextYAlignment.Top,
+})
+
+local sliding = false
+local function pointer(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+end
+local function fromInput(input)
+	local width = math.max(bar.AbsoluteSize.X, 1)
+	local rel = (input.Position.X - bar.AbsolutePosition.X) / width
+	setHour(math.clamp(rel, 0, 1) * 24, false)
+end
+hit.InputBegan:Connect(function(input)
+	if pointer(input) then
+		sliding = true
+		fromInput(input)
+	end
+end)
+on(UserInputService.InputChanged, function(input)
+	if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		fromInput(input)
+	end
+end)
+on(UserInputService.InputEnded, function(input)
+	if sliding and pointer(input) then
+		sliding = false
+		setHour(hour, true)
+	end
+end)
+
+-- re-apply the time saved for this project (also after Play mode or a project switch)
+function H.applyClock()
+	local list = save.settings.clock
+	local saved = type(list) == "table" and list[placeKey] or nil
+	if type(saved) == "number" then
+		hour = saved
+		pcall(function()
+			lighting().ClockTime = hour
+		end)
+	else
+		pcall(function()
+			hour = lighting().ClockTime
+		end)
+	end
+	render()
+end
+render()
+end -- BLOCK world
+
+---------------------------------------------------------------------
 -- Tab switching
 ---------------------------------------------------------------------
 local currentTab = 1
@@ -3562,6 +3838,7 @@ local function rememberSettings()
 			glow = studio.fx.glow,
 			float = studio.fx.float,
 			rainbow = studio.fx.rainbow,
+			sparkles = studio.fx.sparkles,
 		},
 	}
 end
@@ -3771,6 +4048,12 @@ function H.restore(waitFirst)
 	H.restoring = false
 end
 task.spawn(H.restore, true)
+task.spawn(function()
+	task.wait(1.5)
+	if H.applyClock then
+		pcall(H.applyClock)
+	end
+end)
 
 -- Watchdog: notices when Studio Lite switched to another project or came back from Play mode,
 -- then reconnects to the new world so creating names keeps working.
@@ -3808,6 +4091,9 @@ task.spawn(function()
 				table.clear(animated)
 				H.getFolder()
 				pcall(renderList)
+				if H.applyClock then
+					pcall(H.applyClock)
+				end
 				task.spawn(H.restore, false)
 				task.spawn(function()
 					task.wait(1)
@@ -3898,4 +4184,3 @@ if CONFIG.PromptOnLaunch then
 		end)
 	end)
 end
-
