@@ -2,6 +2,7 @@
 DZ HUP  |  3D Name Maker  (Executor Edition)
 Made by RiyadoDzz
 
+v8.1: no more failed rbxassetid sound error; optional local sound file.
 v8: click sound forced (downloaded once, played from a local file), World tab with
 Day / Night, Sparkles are now an optional effect (off by default).
 
@@ -67,6 +68,12 @@ local CONFIG = {
 	WhatsApp = "https://whatsapp.com/channel/0029VbDuGkhGJP8DJbzVEG0K",
 	TikTok = "https://tiktok.com/@rx..dz",
 
+	-- Support me: Game Passes (the link is copied when the button is pressed)
+	SupportPasses = {
+		{ amount = 50, id = 1940166338 },
+		{ amount = 100, id = 1933036013 },
+	},
+
 	RobloxUsername = "RiyadoDzz",
 	AvatarRobloxUserId = 0,
 	AvatarImageUrl = "",
@@ -81,6 +88,11 @@ local CONFIG = {
 	SaveFile = "DZHUP_NameMaker.json",
 	PromptOnLaunch = true,
 
+	-- Studio Lite refuses to play marketplace sounds (even by id), so the id is only used to try a
+	-- download. If you have the sound as a file, put it in your executor workspace folder with the
+	-- name below and it is used first.
+	ClickSoundFile = "DZHUP_click.mp3",
+	TryAssetIdDirect = false, -- true = also try rbxassetid directly (prints an error in Studio Lite)
 	ClickSoundAssetId = 70968472837037, -- played from a downloaded local file, so it works without publishing
 	ClickSoundIds = {
 		"rbxasset://sounds/button.wav",
@@ -445,6 +457,21 @@ task.spawn(function()
 	local assetId = CONFIG.ClickSoundAssetId
 	local localAsset = nil
 
+	-- 0) your own file in the executor workspace folder
+	if hasFS and type(getcustomasset) == "function" and CONFIG.ClickSoundFile then
+		local found = false
+		pcall(function()
+			found = isfile(CONFIG.ClickSoundFile)
+		end)
+		if found then
+			local ok, asset = pcall(getcustomasset, CONFIG.ClickSoundFile)
+			if ok and asset then
+				localAsset = asset
+				table.insert(candidates, asset)
+			end
+		end
+	end
+
 	-- 1) download the sound once and play it from a local file (works in Studio Lite,
 	--    no publishing and no asset permission needed)
 	if assetId and hasFS and type(getcustomasset) == "function" then
@@ -498,7 +525,7 @@ task.spawn(function()
 		end
 	end
 	-- 2) the asset id itself, then the official Roblox sounds
-	if assetId then
+	if assetId and CONFIG.TryAssetIdDirect then
 		table.insert(candidates, "rbxassetid://" .. tostring(assetId))
 	end
 	for _, id in ipairs(CONFIG.ClickSoundIds) do
@@ -3088,7 +3115,7 @@ end -- BLOCK mynames
 ---------------------------------------------------------------------
 do -- BLOCK creator
 local aboutLeft = new("Frame", {
-	Size = UDim2.fromOffset(240, 300),
+	Size = UDim2.fromOffset(240, 356),
 	BackgroundColor3 = THEME.surface,
 	BorderSizePixel = 0,
 }, aboutPage)
@@ -3192,7 +3219,7 @@ textLabel(communityPill, CONFIG.Community, {
 
 local aboutRight = new("Frame", {
 	Position = UDim2.fromOffset(252, 0),
-	Size = UDim2.fromOffset(336, 300),
+	Size = UDim2.fromOffset(336, 356),
 	BackgroundColor3 = THEME.surface,
 	BorderSizePixel = 0,
 }, aboutPage)
@@ -3273,8 +3300,23 @@ contactCard(38, "D", THEME.discord, "Discord", "Join the community server", CONF
 contactCard(108, "W", THEME.whatsapp, "WhatsApp", "Follow the channel", CONFIG.WhatsApp, "WhatsApp link copied")
 contactCard(178, "T", THEME.tiktok, "TikTok", "Follow my account", CONFIG.TikTok, "TikTok link copied")
 
-textLabel(aboutRight, "Tap a card to copy its link, then paste it in your browser.", {
-	Position = UDim2.fromOffset(16, 250),
+-- Support me (Game Passes)
+for index, pass in ipairs(CONFIG.SupportPasses or {}) do
+	local supportButton = makeButton(aboutRight, {
+		Text = "Support  " .. tostring(pass.amount) .. " R$",
+		Position = UDim2.fromOffset(16 + (index - 1) * 160, 256),
+		Size = UDim2.fromOffset(144, 34),
+		TextSize = 13,
+		Font = Enum.Font.GothamBlack,
+		TextColor3 = THEME.dark,
+	}, { fill = THEME.accent, hover = THEME.accentSoft, stroke = THEME.accentSoft, strokeTransparency = 0.5, radius = 10 })
+	supportButton.Activated:Connect(function()
+		copyLink("https://www.roblox.com/game-pass/" .. tostring(pass.id), "Support link copied (" .. tostring(pass.amount) .. " R$)")
+	end)
+end
+
+textLabel(aboutRight, "Tap a card or a Support button to copy its link, then paste it in your browser.", {
+	Position = UDim2.fromOffset(16, 298),
 	Size = UDim2.new(1, -32, 0, 22),
 	TextSize = 10,
 	TextColor3 = THEME.muted,
