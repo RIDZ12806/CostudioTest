@@ -2,6 +2,11 @@
 DZ HUP  |  3D Name Maker  (Executor Edition)
 Made by RiyadoDzz
 
+v6: effects that work with NO script (saved inside the project):
+- Float = real physics (spring + slider constraint, saved in the name), bobs up and down in Play.
+- Dual color / Rainbow = colored shimmer particles on every letter (also visible in edit mode).
+- Old names are upgraded in place (your manual edits are kept).
+
 v5: names are held in place WITHOUT any script (anchored + body movers),
 colors are baked into the letters, saved names in the project are adopted (never deleted),
 and the effects installer tries every method and reports why it failed.
@@ -1799,6 +1804,9 @@ end
 -- Layer 1: Anchored. Layer 2: BodyPosition + BodyGyro saved inside every part, so even if
 -- the anchoring were lost after saving, the letters still stay exactly where they are.
 function H.hold(model)
+	if model:GetAttribute("DZ_Phys") == true then
+		return
+	end
 	for _, item in ipairs(model:GetDescendants()) do
 		if item:IsA("BasePart") then
 			pcall(function()
@@ -1826,6 +1834,219 @@ function H.hold(model)
 	end
 end
 
+-- Dual color / rainbow without any script: colored sparkles that live on every letter.
+-- Particles are saved inside the project and animate by themselves (even in edit mode).
+function H.addParticles(group)
+	if group:GetAttribute("DZ_Particles") == true then
+		return
+	end
+	local c1 = group:GetAttribute("DZ_C1")
+	local c2 = group:GetAttribute("DZ_C2")
+	if typeof(c1) ~= "Color3" then
+		return
+	end
+	local seq = nil
+	if group:GetAttribute("DZ_Rainbow") == true then
+		local keys = {}
+		for i = 0, 6 do
+			table.insert(keys, ColorSequenceKeypoint.new(i / 6, Color3.fromHSV(math.min(i / 6, 0.99), 0.75, 1)))
+		end
+		seq = ColorSequence.new(keys)
+	elseif typeof(c2) == "Color3" then
+		seq = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, c1),
+			ColorSequenceKeypoint.new(0.5, c2),
+			ColorSequenceKeypoint.new(1, c1),
+		})
+	else
+		return
+	end
+	for _, letter in ipairs(group:GetChildren()) do
+		if type(letter:GetAttribute("DZ_T")) == "number" then
+			pcall(function()
+				local best, bestVolume = nil, nil
+				for _, item in ipairs(letter:GetDescendants()) do
+					if item:IsA("BasePart") then
+						local volume = item.Size.X * item.Size.Y * item.Size.Z
+						if not bestVolume or volume > bestVolume then
+							best, bestVolume = item, volume
+						end
+					end
+				end
+				if letter:IsA("BasePart") then
+					best = letter
+				end
+				if not best or best:FindFirstChild("DZ_Shimmer") then
+					return
+				end
+				local size = best.Size
+				local dot = math.clamp(math.max(size.X, size.Y) * 0.16, 0.15, 1.2)
+				local emitter = Instance.new("ParticleEmitter")
+				emitter.Name = "DZ_Shimmer"
+				emitter.Color = seq
+				emitter.LightEmission = 0.7
+				emitter.LightInfluence = 0
+				emitter.Lifetime = NumberRange.new(1.2, 2.2)
+				emitter.Rate = math.clamp(size.X * size.Y * 1.5, 6, 70)
+				emitter.Speed = NumberRange.new(0, 0.2)
+				emitter.Rotation = NumberRange.new(0, 360)
+				emitter.RotSpeed = NumberRange.new(-60, 60)
+				emitter.Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0),
+					NumberSequenceKeypoint.new(0.3, dot),
+					NumberSequenceKeypoint.new(1, 0),
+				})
+				emitter.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 1),
+					NumberSequenceKeypoint.new(0.2, 0.1),
+					NumberSequenceKeypoint.new(0.8, 0.3),
+					NumberSequenceKeypoint.new(1, 1),
+				})
+				emitter.LockedToPart = true
+				emitter.ZOffset = 0.5
+				pcall(function()
+					emitter.Shape = Enum.ParticleEmitterShape.Box
+					emitter.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+				end)
+				emitter.Parent = best
+			end)
+		end
+	end
+	pcall(function()
+		group:SetAttribute("DZ_Particles", true)
+	end)
+end
+
+-- Float without any script: the whole name becomes ONE welded body that is
+-- (1) kept up by a force that cancels gravity, (2) guided on a vertical slider,
+-- (3) pushed by a spring, so it bobs up and down forever in Play mode.
+-- Everything is saved inside the name, so no Script is needed.
+function H.floatPhysics(group, amp)
+	if group:GetAttribute("DZ_Phys") == true then
+		return true
+	end
+	amp = math.clamp(amp or 0.35, 0.1, 3)
+	local ok, err = pcall(function()
+		local parts = {}
+		for _, item in ipairs(group:GetDescendants()) do
+			if item:IsA("BasePart") and item.Name ~= "DZ_FloatAnchor" then
+				table.insert(parts, item)
+			end
+		end
+		if #parts == 0 then
+			error("no parts")
+		end
+		local root = group.PrimaryPart
+		if not root or not root:IsDescendantOf(group) then
+			root = parts[1]
+		end
+		for _, item in ipairs(parts) do
+			for _, moverName in ipairs({ "DZ_HoldPos", "DZ_HoldRot" }) do
+				local mover = item:FindFirstChild(moverName)
+				if mover then
+					mover:Destroy()
+				end
+			end
+		end
+
+		local mass, weighted = 0, Vector3.zero
+		for _, item in ipairs(parts) do
+			local m = item:GetMass()
+			mass += m
+			weighted += item.Position * m
+		end
+		local com = weighted / mass
+		local gravity = game:GetService("Workspace").Gravity
+		local restLength = 6
+		local tilt = CFrame.Angles(0, 0, math.pi / 2) -- makes the attachment X axis point up
+
+		local helper = Instance.new("Part")
+		helper.Name = "DZ_FloatAnchor"
+		helper.Size = Vector3.new(0.2, 0.2, 0.2)
+		helper.Transparency = 1
+		helper.Anchored = true
+		helper.CanCollide = false
+		helper.CanTouch = false
+		helper.CanQuery = false
+		helper.CastShadow = false
+		helper.CFrame = CFrame.new(com + Vector3.new(0, restLength, 0))
+		helper.Parent = group
+
+		local top = Instance.new("Attachment")
+		top.Name = "DZ_FloatTop"
+		top.CFrame = tilt
+		top.Parent = helper
+
+		local body = Instance.new("Attachment")
+		body.Name = "DZ_FloatBody"
+		body.CFrame = root.CFrame:ToObjectSpace(CFrame.new(com) * tilt)
+		body.Parent = root
+
+		for _, item in ipairs(parts) do
+			if item ~= root and not item:FindFirstChild("DZ_Weld") then
+				local weld = Instance.new("WeldConstraint")
+				weld.Name = "DZ_Weld"
+				weld.Part0 = root
+				weld.Part1 = item
+				weld.Parent = item
+			end
+		end
+
+		local lift = Instance.new("VectorForce")
+		lift.Name = "DZ_AntiGravity"
+		lift.Attachment0 = body
+		lift.RelativeTo = Enum.ActuatorRelativeTo.World
+		lift.ApplyAtCenterOfMass = true
+		lift.Force = Vector3.new(0, mass * gravity, 0)
+		lift.Parent = root
+
+		local slider = Instance.new("PrismaticConstraint")
+		slider.Name = "DZ_FloatSlider"
+		slider.Attachment0 = top
+		slider.Attachment1 = body
+		slider.LimitsEnabled = false
+		slider.Parent = helper
+
+		local omega = 1.4
+		local spring = Instance.new("SpringConstraint")
+		spring.Name = "DZ_FloatSpring"
+		spring.Attachment0 = top
+		spring.Attachment1 = body
+		spring.Stiffness = mass * omega * omega
+		spring.Damping = 0
+		spring.FreeLength = restLength + amp
+		spring.LimitsEnabled = false
+		spring.MaxForce = math.huge
+		spring.Visible = false
+		spring.Parent = helper
+
+		for _, item in ipairs(parts) do
+			item.Anchored = false
+			item.CanCollide = false
+			item.CanTouch = false
+		end
+		group:SetAttribute("DZ_Phys", true)
+	end)
+	if not ok then
+		warn("[DZHUP] Float physics failed: " .. tostring(err))
+	end
+	return ok
+end
+
+-- Brings a name made by an older version up to date without rebuilding it
+-- (so manual changes you made to it stay).
+function H.upgrade(group)
+	if group:GetAttribute("DZ_FX") ~= true then
+		return
+	end
+	if group:GetAttribute("DZ_Colors") == true then
+		H.addParticles(group)
+	end
+	if group:GetAttribute("DZ_Float") == true and group:GetAttribute("DZ_Phys") ~= true then
+		H.floatPhysics(group, group:GetAttribute("DZ_Amp") or 0.35)
+	end
+end
+
 -- A name that already exists in the project (saved earlier) is adopted as it is:
 -- it is never deleted or rebuilt, so every manual change you made to it is kept.
 function H.adopt(group)
@@ -1841,7 +2062,7 @@ function H.adopt(group)
 		c1 = c1,
 		c2 = typeof(c2) == "Color3" and c2 or nil,
 		rainbow = group:GetAttribute("DZ_Rainbow") == true,
-		float = group:GetAttribute("DZ_Float") == true,
+		float = group:GetAttribute("DZ_Float") == true and group:GetAttribute("DZ_Phys") ~= true,
 		base = group:GetPivot(),
 		amp = group:GetAttribute("DZ_Amp") or 0.35,
 		phase = group:GetAttribute("DZ_Phase") or 0,
@@ -1878,7 +2099,7 @@ end
 -- Effects script installer (tries every known method, reports why it fails)
 ---------------------------------------------------------------------
 do -- BLOCK effectsInstaller
-local EFFECT_VERSION = 5
+local EFFECT_VERSION = 6
 local EFFECT_MARK = "DZ HUP | Name Effects"
 
 local EFFECT_SOURCE = [==[
@@ -1955,7 +2176,9 @@ local function track(model)
 	if not model:IsA("Model") then
 		return
 	end
-	pcall(anchorAll, model)
+	if model:GetAttribute("DZ_Phys") ~= true then
+		pcall(anchorAll, model)
+	end
 	if not tracked[model] and model:GetAttribute("DZ_FX") == true then
 		local ok, info = pcall(collect, model)
 		if ok then
@@ -2022,7 +2245,7 @@ RunService.Heartbeat:Connect(function()
 					end
 				end
 			end
-			if info.floating then
+			if info.floating and model:GetAttribute("DZ_Phys") ~= true then
 				model:PivotTo(info.base + Vector3.new(0, math.sin(now * 1.4 + info.phase) * info.amp, 0))
 			end
 		end
@@ -2399,12 +2622,19 @@ local function buildName(entry)
 			group:SetAttribute("DZ_Speed", CONFIG.WaveSpeed)
 			group:SetAttribute("DZ_Spread", CONFIG.WaveSpread)
 		end)
+		if colorAnim then
+			H.addParticles(group)
+		end
+		local physOk = false
+		if fx.float then
+			physOk = H.floatPhysics(group, fxAmp) == true
+		end
 		animated[group] = {
 			c1 = color,
 			c2 = color2,
 			rainbow = fx.rainbow == true,
 			letters = colorAnim and waveLetters or nil,
-			float = fx.float == true,
+			float = fx.float == true and not physOk,
 			base = fxBase,
 			amp = fxAmp,
 			phase = fxPhase,
@@ -3452,6 +3682,7 @@ function H.restore(waitFirst)
 		if existing then
 			-- already saved inside the project: keep it exactly as it is
 			H.hold(existing)
+			pcall(H.upgrade, existing)
 			pcall(H.adopt, existing)
 		else
 			if type(entry.center) == "table" then
